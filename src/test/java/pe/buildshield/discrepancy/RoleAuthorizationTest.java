@@ -35,6 +35,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /** Matriz de autorización de la API de discrepancias contra anónimo y cada rol (los servicios están simulados). */
 @WebMvcTest
 @WebSliceTest
+@org.springframework.context.annotation.Import(pe.buildshield.discrepancy.application.EvidenceUrlSigner.class)
 class RoleAuthorizationTest {
 
     private static final UUID ID = UUID.fromString("00000000-0000-0000-0000-0000000000aa");
@@ -80,7 +81,8 @@ class RoleAuthorizationTest {
             "UPLOAD, /api/v1/discrepancies/{id}/evidences, SITE_MANAGER, 201",
             "UPLOAD, /api/v1/discrepancies/{id}/evidences, WAREHOUSE_MANAGER, 403",
             "UPLOAD, /api/v1/discrepancies/{id}/evidences, ANONYMOUS, 401",
-            "GET, /api/v1/discrepancies/{id}/evidences/{id}/content, ADMINISTRATOR, 200"
+            "GET, /api/v1/discrepancies/{id}/evidences/{id}/content, ADMINISTRATOR, 200",
+            "GET, /api/v1/discrepancies/{id}/evidences/{id}/content, ANONYMOUS, 200"
     })
     void each_endpoint_answers_by_role(String method, String path, String role, int expected) throws Exception {
         Discrepancy discrepancy = sample();
@@ -93,8 +95,8 @@ class RoleAuthorizationTest {
         when(commands.addEvidence(any(), any())).thenReturn(evidence);
         when(queries.list(any(), any(), any())).thenReturn(List.of(discrepancy));
         when(queries.get(any())).thenReturn(discrepancy);
-        when(queries.evidence(any(), any())).thenReturn(new DiscrepancyQueryService.EvidenceFile(evidence,
-                TestImages.JPEG));
+        when(queries.evidenceWithToken(any(), any(), any())).thenReturn(new DiscrepancyQueryService.EvidenceFile(
+                evidence, TestImages.JPEG));
 
         String url = path.replace("{id}", ID.toString());
         MockHttpServletRequestBuilder request = switch (method) {

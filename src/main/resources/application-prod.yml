@@ -8,6 +8,8 @@ spring:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
 
 buildshield:
+  evidence:
+    url-secret: ${EVIDENCE_URL_SECRET}
   security:
     jwt-public-key: ${BUILDSHIELD_JWT_PUBLIC_KEY}
 

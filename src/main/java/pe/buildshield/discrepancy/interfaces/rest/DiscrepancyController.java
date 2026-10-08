@@ -26,6 +26,8 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import pe.buildshield.discrepancy.application.DiscrepancyCommandService;
 import pe.buildshield.discrepancy.application.DiscrepancyQueryService;
+import pe.buildshield.discrepancy.application.EvidenceUrlSigner;
+import pe.buildshield.discrepancy.shared.tenant.TenantContext;
 import pe.buildshield.discrepancy.domain.model.Discrepancy;
 import pe.buildshield.discrepancy.domain.model.DiscrepancyStatus;
 import pe.buildshield.discrepancy.domain.model.DiscrepancyType;
@@ -39,6 +41,7 @@ import java.net.URI;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Function;
 
 @RestController
 @RequestMapping("/api/v1/discrepancies")
@@ -48,10 +51,19 @@ class DiscrepancyController {
 
     private final DiscrepancyCommandService commands;
     private final DiscrepancyQueryService queries;
+    private final EvidenceUrlSigner signer;
 
-    DiscrepancyController(DiscrepancyCommandService commands, DiscrepancyQueryService queries) {
+    DiscrepancyController(DiscrepancyCommandService commands, DiscrepancyQueryService queries,
+            EvidenceUrlSigner signer) {
         this.commands = commands;
         this.queries = queries;
+        this.signer = signer;
+    }
+
+    private DiscrepancyResource resource(Discrepancy discrepancy) {
+        UUID organizationId = TenantContext.require().organizationId();
+        return DiscrepancyResource.of(organizationId, discrepancy,
+                evidence -> signer.signedUrl(organizationId, discrepancy.id(), evidence));
     }
 
     @PostMapping
@@ -69,7 +81,7 @@ class DiscrepancyController {
         Discrepancy created = commands.create(new DiscrepancyCommandService.CreateDiscrepancy(request.receptionId(),
                 request.materialId(), request.type(), request.quantity(), request.observation()));
         return ResponseEntity.created(URI.create("/api/v1/discrepancies/" + created.id()))
-                .body(DiscrepancyResource.of(created));
+                .body(resource(created));
     }
 
     @GetMapping
@@ -86,7 +98,7 @@ class DiscrepancyController {
             @RequestParam(required = false) UUID worksiteId,
             @Parameter(description = "Despacho", example = DiscrepancyApiExamples.DISPATCH_ID)
             @RequestParam(required = false) UUID dispatchId) {
-        return queries.list(status, worksiteId, dispatchId).stream().map(DiscrepancyResource::of).toList();
+        return queries.list(status, worksiteId, dispatchId).stream().map(this::resource).toList();
     }
 
     @GetMapping("/{id}")
@@ -100,7 +112,7 @@ class DiscrepancyController {
             content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     DiscrepancyResource get(@Parameter(description = "Id de la discrepancia",
             example = DiscrepancyApiExamples.DISCREPANCY_ID) @PathVariable UUID id) {
-        return DiscrepancyResource.of(queries.get(id));
+        return resource(queries.get(id));
     }
 
     @PostMapping(value = "/{id}/evidences", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -121,23 +133,27 @@ class DiscrepancyController {
             throws IOException {
         Evidence evidence = commands.addEvidence(id, new DiscrepancyCommandService.EvidenceUpload(
                 file.getOriginalFilename(), file.getContentType(), file.getBytes()));
-        return ResponseEntity.created(URI.create(evidence.url())).body(EvidenceResource.of(evidence));
+        String url = signer.signedUrl(TenantContext.require().organizationId(), id, evidence);
+        return ResponseEntity.created(URI.create(evidence.url())).body(EvidenceResource.of(evidence, url));
     }
 
     @GetMapping("/{id}/evidences/{evidenceId}/content")
-    @PreAuthorize("hasAnyRole('ADMINISTRATOR', 'WAREHOUSE_MANAGER', 'SITE_MANAGER')")
     @Operation(summary = "Descargar la foto de una evidencia",
-            description = "Devuelve la imagen con su tipo. La web la pide con el token (no como enlace público).")
+            description = "Devuelve la imagen con su tipo. Es la url firmada de cada evidencia: se usa tal cual en "
+                    + "<img src> (sin cabecera Authorization) y vence a los 30 minutos.")
     @ApiResponse(responseCode = "200", description = "Imagen de la evidencia",
             content = @Content(mediaType = "image/jpeg", schema = @Schema(type = "string", format = "binary")))
-    @ApiResponse(responseCode = "404", description = "No existe o no la puede ver",
+    @ApiResponse(responseCode = "404", description = "No existe, el token no corresponde o ya venció",
             content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     ResponseEntity<byte[]> evidenceContent(
             @Parameter(description = "Id de la discrepancia", example = DiscrepancyApiExamples.DISCREPANCY_ID)
             @PathVariable UUID id,
             @Parameter(description = "Id de la evidencia", example = DiscrepancyApiExamples.EVIDENCE_ID)
-            @PathVariable UUID evidenceId) {
-        var file = queries.evidence(id, evidenceId);
+            @PathVariable UUID evidenceId,
+            @Parameter(description = "Firma de acceso que trae la url de la evidencia",
+                    example = "3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b.1793722200.q1w2e3r4t5y6u7i8o9p0")
+            @RequestParam(required = false) String token) {
+        var file = queries.evidenceWithToken(id, evidenceId, token);
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(file.evidence().contentType()))
                 .cacheControl(CacheControl.noStore())
@@ -155,7 +171,7 @@ class DiscrepancyController {
     DiscrepancyResource respond(@Parameter(description = "Id de la discrepancia",
             example = DiscrepancyApiExamples.DISCREPANCY_ID) @PathVariable UUID id,
             @Valid @RequestBody TextRequest request) {
-        return DiscrepancyResource.of(commands.respond(id, request.text()));
+        return resource(commands.respond(id, request.text()));
     }
 
     @PostMapping("/{id}/accept")
@@ -167,7 +183,7 @@ class DiscrepancyController {
                     examples = @ExampleObject(value = DiscrepancyApiExamples.DISCREPANCY)))
     DiscrepancyResource accept(@Parameter(description = "Id de la discrepancia",
             example = DiscrepancyApiExamples.DISCREPANCY_ID) @PathVariable UUID id) {
-        return DiscrepancyResource.of(commands.accept(id));
+        return resource(commands.accept(id));
     }
 
     @PostMapping("/{id}/escalate")
@@ -180,7 +196,7 @@ class DiscrepancyController {
     DiscrepancyResource escalate(@Parameter(description = "Id de la discrepancia",
             example = DiscrepancyApiExamples.DISCREPANCY_ID) @PathVariable UUID id,
             @Valid @RequestBody ReasonRequest request) {
-        return DiscrepancyResource.of(commands.escalate(id, request.reason()));
+        return resource(commands.escalate(id, request.reason()));
     }
 
     @PostMapping("/{id}/resolve")
@@ -193,7 +209,7 @@ class DiscrepancyController {
     DiscrepancyResource resolve(@Parameter(description = "Id de la discrepancia",
             example = DiscrepancyApiExamples.DISCREPANCY_ID) @PathVariable UUID id,
             @Valid @RequestBody DecisionRequest request) {
-        return DiscrepancyResource.of(commands.resolve(id, request.decision()));
+        return resource(commands.resolve(id, request.decision()));
     }
 
     @Schema(description = "Discrepancia registrada a mano")
@@ -241,8 +257,8 @@ class DiscrepancyController {
 
     @Schema(description = "Foto de evidencia")
     record EvidenceResource(UUID id, String url, String fileName, UUID uploadedBy, Instant uploadedAt) {
-        static EvidenceResource of(Evidence evidence) {
-            return new EvidenceResource(evidence.id(), evidence.url(), evidence.fileName(), evidence.uploadedBy(),
+        static EvidenceResource of(Evidence evidence, String signedUrl) {
+            return new EvidenceResource(evidence.id(), signedUrl, evidence.fileName(), evidence.uploadedBy(),
                     evidence.uploadedAt());
         }
     }
@@ -255,18 +271,19 @@ class DiscrepancyController {
             ResponseNote response, EscalationNote escalation, ResolutionNote resolution,
             List<EvidenceResource> evidences) {
 
-        static DiscrepancyResource of(Discrepancy discrepancy) {
+        static DiscrepancyResource of(UUID organizationId, Discrepancy discrepancy,
+                Function<Evidence, String> signedUrl) {
             var reception = discrepancy.reception();
             var material = discrepancy.material();
-            return new DiscrepancyResource(discrepancy.id(), pe.buildshield.discrepancy.shared.tenant.TenantContext
-                    .require().organizationId(), reception.receptionId(), reception.dispatchId(),
+            return new DiscrepancyResource(discrepancy.id(), organizationId, reception.receptionId(), reception.dispatchId(),
                     reception.manifestCode(), reception.worksiteId(), reception.warehouseId(), material.materialId(),
                     material.sku(), material.name(), discrepancy.type(), discrepancy.type().label(),
                     discrepancy.quantity(), discrepancy.shrinkagePercent(), discrepancy.tolerancePercent(),
                     discrepancy.observation(), discrepancy.status(), discrepancy.status().label(),
                     discrepancy.openedBy(), discrepancy.openedAt(), ResponseNote.of(discrepancy.response()),
                     EscalationNote.of(discrepancy.escalation()), ResolutionNote.of(discrepancy.resolution()),
-                    discrepancy.evidences().stream().map(EvidenceResource::of).toList());
+                    discrepancy.evidences().stream()
+                            .map(evidence -> EvidenceResource.of(evidence, signedUrl.apply(evidence))).toList());
         }
     }
 }

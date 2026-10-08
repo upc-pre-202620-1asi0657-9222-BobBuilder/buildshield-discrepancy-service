@@ -226,8 +226,14 @@ public class DiscrepancySteps {
         session.expectStatus(200);
         JsonNode evidences = session.body().path("evidences");
         assertThat(evidences.size()).isEqualTo(count);
-        ApiResponse photo = session.perform(get(evidences.get(0).path("url").asText()), null, session.accessToken());
+        // Como <img src>: la url relativa firmada, sin cabecera Authorization.
+        String url = evidences.get(0).path("url").asText();
+        assertThat(url).startsWith("/api/v1/discrepancies/").contains("/content?token=");
+        String path = url.substring(0, url.indexOf('?'));
+        String token = url.substring(url.indexOf("token=") + 6);
+        ApiResponse photo = session.perform(get(path).param("token", token), null, null);
         assertThat(photo.status()).isEqualTo(200);
+        assertThat(session.perform(get(path), null, null).status()).isEqualTo(404);
     }
 
     @Entonces("la respuesta tiene estado {int}")

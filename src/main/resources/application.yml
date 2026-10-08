@@ -68,6 +68,10 @@ buildshield:
     # Emisor de los tokens: los emite iam con su clave privada; este servicio solo valida con la pública.
     issuer: buildshield-iam
     jwt-public-key: ${BUILDSHIELD_JWT_PUBLIC_KEY}
+    # La foto de una evidencia se pide desde <img src> sin cabecera Authorization: la autoriza la firma de su url
+    # (?token=..., EvidenceUrlSigner), no el JWT.
+    public-endpoints:
+      - GET /api/v1/discrepancies/*/evidences/*/content
   # Escrituras sensibles a reintentos desde el celular: Idempotency-Key obligatoria (tabla idempotency_keys). La
   # subida de evidencias (multipart de hasta 5 MB) no la usa: el filtro limita a 1 MiB los cuerpos con clave.
   idempotency:
@@ -83,3 +87,6 @@ buildshield:
   evidence:
     # EvidenceStorageAdapter: carpeta local de las fotos de evidencia (Amazon S3 en la nube).
     local-dir: ${EVIDENCE_LOCAL_DIR:data/evidence}
+    # Firma HMAC de las url de las fotos (al menos 16 caracteres) y su vigencia.
+    url-secret: ${EVIDENCE_URL_SECRET:buildshield-dev-evidence-secret}
+    url-ttl: ${EVIDENCE_URL_TTL:PT30M}

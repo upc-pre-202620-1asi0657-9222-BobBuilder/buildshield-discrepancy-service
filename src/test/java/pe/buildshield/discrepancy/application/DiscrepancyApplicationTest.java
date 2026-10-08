@@ -49,7 +49,10 @@ class DiscrepancyApplicationTest {
     private final DiscrepancyCommandService commands = new DiscrepancyCommandService(store, store, visibility, store,
             outbox, clock);
     private final DiscrepancyEventHandler handler = new DiscrepancyEventHandler(store, commands);
-    private final DiscrepancyQueryService queries = new DiscrepancyQueryService(store, visibility, store);
+    private final EvidenceUrlSigner signer = new EvidenceUrlSigner("secreto-de-pruebas-123", java.time.Duration.ofMinutes(30),
+            clock);
+    private final DiscrepancyQueryService queries = new DiscrepancyQueryService(store, visibility, store, signer,
+            new pe.buildshield.discrepancy.support.TestTransactions());
 
     private final UUID ana = UUID.randomUUID();
     private final UUID rosa = UUID.randomUUID();
@@ -276,6 +279,21 @@ class DiscrepancyApplicationTest {
         assertThat(withPhotos.evidences().get(2).fileName()).isEqualTo("a_b_c.webp");
         var file = TenantContext.callAs(user("WAREHOUSE_MANAGER", rosa), () -> queries.evidence(id, evidence.id()));
         assertThat(file.content()).isEqualTo(TestImages.JPEG);
+
+        String signed = signer.signedUrl(organization, id, evidence);
+        String token = signed.substring(signed.indexOf("?token=") + 7);
+        assertThat(signed).startsWith(evidence.url() + "?token=" + organization + ".");
+        assertThat(queries.evidenceWithToken(id, evidence.id(), token).content()).isEqualTo(TestImages.JPEG);
+        assertThat(TenantContext.current()).isEmpty();
+        assertThatThrownBy(() -> queries.evidenceWithToken(id, UUID.randomUUID(), token))
+                .isInstanceOf(ResourceNotFoundException.class);
+        String otherEvidenceToken = signer.signedUrl(organization, id, new pe.buildshield.discrepancy.domain.model
+                .Evidence(UUID.randomUUID(), "k", "/u", "x.jpg", "image/jpeg", 1, luis, NOW)).split("token=")[1];
+        assertThatThrownBy(() -> queries.evidenceWithToken(id, UUID.fromString("00000000-0000-0000-0000-000000000001"),
+                otherEvidenceToken)).isInstanceOf(ResourceNotFoundException.class);
+        clock.advance(java.time.Duration.ofMinutes(31));
+        assertThatThrownBy(() -> queries.evidenceWithToken(id, evidence.id(), token))
+                .isInstanceOf(ResourceNotFoundException.class);
         assertThatThrownBy(() -> TenantContext.callAs(luisSession, () -> queries.evidence(id, UUID.randomUUID())))
                 .isInstanceOf(ResourceNotFoundException.class);
         store.files.clear();
