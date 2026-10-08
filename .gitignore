@@ -20,3 +20,6 @@ target/
 .env
 *.log
 logs/
+
+### Evidencias guardadas en local ###
+data/
