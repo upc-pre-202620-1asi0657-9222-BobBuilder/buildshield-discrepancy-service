@@ -8,9 +8,8 @@ import java.util.List;
 /** Limpieza SOLO de la base efímera de pruebas ({@code test} de Testcontainers o {@code discrepancy_it}). */
 public final class TestDatabase {
 
-    public static final List<String> TABLES = List.of("discrepancy_evidences", "discrepancies",
-            "reception_line_projection", "reception_projection", "material_projection", "assignment_projection",
-            "idempotency_keys", "outbox_events", "processed_events");
+    public static final List<String> TABLES = List.of("discrepancy_evidences", "discrepancy_responses",
+            "discrepancies", "assignment_projection", "idempotency_keys", "outbox_events", "processed_events");
 
     private TestDatabase() {
     }

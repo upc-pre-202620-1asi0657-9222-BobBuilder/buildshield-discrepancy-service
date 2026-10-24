@@ -16,7 +16,6 @@ public final class DiscrepancyEvents {
     public static final String ACCEPTED = "DiscrepancyAccepted";
     public static final String ESCALATED = "DiscrepancyEscalated";
     public static final String RESOLVED = "DiscrepancyResolved";
-    public static final String DISCREPANCY = "DISCREPANCY";
 
     private DiscrepancyEvents() {
     }
@@ -24,19 +23,20 @@ public final class DiscrepancyEvents {
     /**
      * Estado de la discrepancia tras el cambio.
      *
-     * @param text la observación al abrir, la respuesta, el motivo del escalamiento o la decisión, según el evento
+     * @param unit unidad del material (la que traía {@code ReceptionConfirmed})
+     * @param text el motivo al abrir, la respuesta, el motivo del escalamiento o la decisión, según el evento
      */
     public record DiscrepancyChanged(UUID discrepancyId, UUID receptionId, UUID receptionLineId, UUID dispatchId,
             String manifestCode, UUID worksiteId, UUID warehouseId, UUID materialId, String sku, String materialName,
-            String type, BigDecimal quantity, String status, String origin, UUID openedBy, String text) {
+            String unit, String type, BigDecimal quantity, String status, UUID openedBy, String text) {
 
         static DiscrepancyChanged of(Discrepancy discrepancy, String text) {
             var reception = discrepancy.reception();
             var material = discrepancy.material();
             return new DiscrepancyChanged(discrepancy.id(), reception.receptionId(), reception.receptionLineId(),
                     reception.dispatchId(), reception.manifestCode(), reception.worksiteId(), reception.warehouseId(),
-                    material.materialId(), material.sku(), material.name(), discrepancy.type().name(),
-                    discrepancy.quantity(), discrepancy.status().name(), discrepancy.origin().name(),
+                    material.materialId(), material.sku(), material.name(), material.unit(),
+                    discrepancy.type().name(), discrepancy.quantity(), discrepancy.status().name(),
                     discrepancy.openedBy(), text);
         }
     }

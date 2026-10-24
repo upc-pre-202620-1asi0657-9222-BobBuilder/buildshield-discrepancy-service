@@ -18,8 +18,7 @@ class EvidenceUrlSignerTest {
             clock);
     private final UUID organization = UUID.randomUUID();
     private final UUID discrepancy = UUID.randomUUID();
-    private final Evidence evidence = new Evidence(UUID.randomUUID(), "k", "/api/v1/discrepancies/d/evidences/e/content",
-            "foto.jpg", "image/jpeg", 10, UUID.randomUUID(), clock.instant());
+    private final Evidence evidence = new Evidence(UUID.randomUUID(), "o/d/e.jpg", clock.instant());
 
     @Test
     void a_signed_url_is_valid_only_for_its_evidence_until_it_expires() {

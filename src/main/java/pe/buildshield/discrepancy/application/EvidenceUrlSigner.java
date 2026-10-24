@@ -40,10 +40,15 @@ public class EvidenceUrlSigner {
         this.clock = clock;
     }
 
+    /** Ruta relativa de la foto (pasa por el gateway), sin firma. */
+    public static String contentPath(UUID discrepancyId, UUID evidenceId) {
+        return "/api/v1/discrepancies/" + discrepancyId + "/evidences/" + evidenceId + "/content";
+    }
+
     /** URL relativa (pasa por el gateway) con el token de acceso a la foto. */
     public String signedUrl(UUID organizationId, UUID discrepancyId, Evidence evidence) {
         long expires = clock.instant().plus(ttl).getEpochSecond();
-        return evidence.url() + "?token=" + organizationId + "." + expires + "."
+        return contentPath(discrepancyId, evidence.id()) + "?token=" + organizationId + "." + expires + "."
                 + signature(organizationId, discrepancyId, evidence.id(), expires);
     }
 

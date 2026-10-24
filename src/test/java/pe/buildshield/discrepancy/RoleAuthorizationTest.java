@@ -9,8 +9,8 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
-import pe.buildshield.discrepancy.application.DiscrepancyCommandService;
-import pe.buildshield.discrepancy.application.DiscrepancyQueryService;
+import pe.buildshield.discrepancy.application.DiscrepanciesCommandService;
+import pe.buildshield.discrepancy.application.DiscrepanciesQueryService;
 import pe.buildshield.discrepancy.domain.model.Discrepancy;
 import pe.buildshield.discrepancy.domain.model.DiscrepancyType;
 import pe.buildshield.discrepancy.domain.model.Evidence;
@@ -48,10 +48,10 @@ class RoleAuthorizationTest {
     JwtTokenIssuer issuer;
 
     @MockitoBean
-    DiscrepancyCommandService commands;
+    DiscrepanciesCommandService commands;
 
     @MockitoBean
-    DiscrepancyQueryService queries;
+    DiscrepanciesQueryService queries;
 
     @MockitoBean
     RevokedTokenStore revokedTokens;
@@ -59,9 +59,7 @@ class RoleAuthorizationTest {
     @ParameterizedTest(name = "{0} {1} como {2} → {3}")
     @CsvSource({
             "POST, /api/v1/discrepancies, ANONYMOUS, 401",
-            "POST, /api/v1/discrepancies, SITE_MANAGER, 201",
-            "POST, /api/v1/discrepancies, WAREHOUSE_MANAGER, 403",
-            "POST, /api/v1/discrepancies, ADMINISTRATOR, 403",
+            "POST, /api/v1/discrepancies, SITE_MANAGER, 405",
             "GET, /api/v1/discrepancies, ANONYMOUS, 401",
             "GET, /api/v1/discrepancies, SITE_MANAGER, 200",
             "GET, /api/v1/discrepancies, WAREHOUSE_MANAGER, 200",
@@ -86,8 +84,7 @@ class RoleAuthorizationTest {
     })
     void each_endpoint_answers_by_role(String method, String path, String role, int expected) throws Exception {
         Discrepancy discrepancy = sample();
-        Evidence evidence = new Evidence(ID, "k", "/u", "foto.jpg", "image/jpeg", 10, ID, NOW);
-        when(commands.create(any())).thenReturn(discrepancy);
+        Evidence evidence = new Evidence(ID, "org/" + ID + "/" + ID + ".jpg", NOW);
         when(commands.respond(any(), any())).thenReturn(discrepancy);
         when(commands.accept(any())).thenReturn(discrepancy);
         when(commands.escalate(any(), any())).thenReturn(discrepancy);
@@ -95,7 +92,7 @@ class RoleAuthorizationTest {
         when(commands.addEvidence(any(), any())).thenReturn(evidence);
         when(queries.list(any(), any(), any())).thenReturn(List.of(discrepancy));
         when(queries.get(any())).thenReturn(discrepancy);
-        when(queries.evidenceWithToken(any(), any(), any())).thenReturn(new DiscrepancyQueryService.EvidenceFile(
+        when(queries.evidenceWithToken(any(), any(), any())).thenReturn(new DiscrepanciesQueryService.EvidenceFile(
                 evidence, TestImages.JPEG));
 
         String url = path.replace("{id}", ID.toString());
@@ -114,18 +111,14 @@ class RoleAuthorizationTest {
     }
 
     private static String body(String url) {
-        if (url.endsWith("/discrepancies")) {
-            return "{\"receptionId\":\"" + ID + "\",\"materialId\":\"" + ID
-                    + "\",\"type\":\"DAMAGE\",\"quantity\":2,\"observation\":\"Bolsas rotas\"}";
-        }
         return "{\"text\":\"Texto\",\"reason\":\"Motivo\",\"decision\":\"Decisión\"}";
     }
 
     private static Discrepancy sample() {
-        return Discrepancy.restore(ID, new Discrepancy.ReceptionLink(ID, null, ID, "MAN-1", ID, ID),
-                new Discrepancy.MaterialLink(ID, "CEM-001", "Cemento"), DiscrepancyType.DAMAGE, BigDecimal.ONE, null,
-                BigDecimal.ONE, "Obs", pe.buildshield.discrepancy.domain.model.DiscrepancyOrigin.MANUAL,
-                pe.buildshield.discrepancy.domain.model.DiscrepancyStatus.OPEN, ID, NOW, null, null, null, null,
+        return Discrepancy.restore(ID, new Discrepancy.ReceptionLink(ID, ID, ID, "MAN-1", ID, ID),
+                new Discrepancy.MaterialLink(ID, "CEM-001", "Cemento", "BOLSA"), DiscrepancyType.SHORTAGE,
+                BigDecimal.ONE, "Faltan 1 BOLSA de 10 despachados",
+                pe.buildshield.discrepancy.domain.model.DiscrepancyStatus.OPEN, ID, NOW, null, null, List.of(),
                 List.of(), 0L);
     }
 }

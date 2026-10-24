@@ -13,14 +13,14 @@ import pe.buildshield.discrepancy.shared.messaging.OutboxPublisher;
 import java.time.Clock;
 
 /**
- * Productor Kafka de discrepancy: cada 500 ms envía a {@code buildshield.discrepancy} los eventos pendientes del
+ * Discrepancies Outbox Publisher (C4 v4): cada 500 ms envía a {@code buildshield.discrepancy} los eventos pendientes del
  * outbox ({@code DiscrepancyOpened}, {@code DiscrepancyResponded}, {@code DiscrepancyAccepted},
  * {@code DiscrepancyEscalated}, {@code DiscrepancyResolved}).
  */
 @Component
-public class DiscrepancyOutboxPublisher extends OutboxPublisher {
+public class DiscrepanciesOutboxPublisher extends OutboxPublisher {
 
-    public DiscrepancyOutboxPublisher(JdbcTemplate jdbc, KafkaTemplate<String, String> kafka, ObjectMapper json,
+    public DiscrepanciesOutboxPublisher(JdbcTemplate jdbc, KafkaTemplate<String, String> kafka, ObjectMapper json,
             PlatformTransactionManager transactionManager, Clock clock, BuildshieldProperties properties) {
         super(jdbc, kafka, json, new TransactionTemplate(transactionManager), clock,
                 properties.getMessaging().getTopic(), properties.getMessaging().getBatchSize(),

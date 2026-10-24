@@ -4,7 +4,7 @@ import org.springframework.stereotype.Component;
 import pe.buildshield.discrepancy.domain.model.Discrepancy;
 import pe.buildshield.discrepancy.domain.model.DiscrepancyFilter;
 import pe.buildshield.discrepancy.domain.model.DiscrepancyStatus;
-import pe.buildshield.discrepancy.domain.model.LogisticsCopies;
+import pe.buildshield.discrepancy.domain.model.StaffAssignments;
 import pe.buildshield.discrepancy.shared.tenant.TenantContext;
 import pe.buildshield.discrepancy.shared.tenant.TenantInfo;
 
@@ -25,10 +25,10 @@ public class DiscrepancyVisibility {
     static final String WORKSITE = "WORKSITE";
     static final String WAREHOUSE = "WAREHOUSE";
 
-    private final LogisticsCopies copies;
+    private final StaffAssignments assignments;
 
-    public DiscrepancyVisibility(LogisticsCopies copies) {
-        this.copies = copies;
+    public DiscrepancyVisibility(StaffAssignments assignments) {
+        this.assignments = assignments;
     }
 
     DiscrepancyFilter filter(DiscrepancyStatus status, UUID worksiteId, UUID dispatchId) {
@@ -58,6 +58,6 @@ public class DiscrepancyVisibility {
     }
 
     private Set<UUID> assigned(TenantInfo requester, String type) {
-        return copies.assignedLocations(requester.organizationId(), requester.userId(), type);
+        return assignments.assignedLocations(requester.organizationId(), requester.userId(), type);
     }
 }

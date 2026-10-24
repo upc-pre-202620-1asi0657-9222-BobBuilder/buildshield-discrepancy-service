@@ -77,7 +77,6 @@ buildshield:
   idempotency:
     enabled: true
     required-paths:
-      - /api/v1/discrepancies
       - /api/v1/discrepancies/*/response
       - /api/v1/discrepancies/*/accept
       - /api/v1/discrepancies/*/escalate

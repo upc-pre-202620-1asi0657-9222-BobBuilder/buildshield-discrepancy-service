@@ -10,6 +10,8 @@ public final class Texts {
 
     public static final int MIN = 3;
     public static final int MAX = 500;
+    /** Largo de {@code discrepancies.reason} en el ER v4. */
+    public static final int MAX_REASON = 60;
 
     private Texts() {
     }
@@ -21,5 +23,11 @@ public final class Texts {
                     List.of(new ErrorDetail(field, "de 3 a 500 caracteres")));
         }
         return text;
+    }
+
+    /** Recorta un motivo generado al largo de {@code reason}, terminando en «…» si no cabía. */
+    public static String reason(String value) {
+        String text = value.trim();
+        return text.length() <= MAX_REASON ? text : text.substring(0, MAX_REASON - 1) + "…";
     }
 }

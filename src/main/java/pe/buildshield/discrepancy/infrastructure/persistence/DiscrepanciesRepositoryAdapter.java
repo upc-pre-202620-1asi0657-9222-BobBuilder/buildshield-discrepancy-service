@@ -7,28 +7,22 @@ import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Repository;
 import pe.buildshield.discrepancy.domain.model.Discrepancy;
 import pe.buildshield.discrepancy.domain.model.DiscrepancyFilter;
-import pe.buildshield.discrepancy.domain.model.DiscrepancyRepository;
-import pe.buildshield.discrepancy.domain.model.DiscrepancyStatus;
-import pe.buildshield.discrepancy.domain.model.DiscrepancyType;
+import pe.buildshield.discrepancy.domain.model.DiscrepanciesRepository;
 import pe.buildshield.discrepancy.shared.error.ResourceNotFoundException;
 
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
-/** El filtro multiempresa limita toda lectura a la organización del contexto. */
+/** Discrepancies Repository (C4 v4). El filtro multiempresa limita toda lectura a la organización del contexto. */
 @Repository
-class JpaDiscrepancyRepository implements DiscrepancyRepository {
+class DiscrepanciesRepositoryAdapter implements DiscrepanciesRepository {
 
-    private static final EnumSet<DiscrepancyStatus> UNCLOSED = EnumSet.of(DiscrepancyStatus.OPEN,
-            DiscrepancyStatus.RESPONDED, DiscrepancyStatus.ESCALATED);
+    private final DiscrepanciesJpaRepository jpa;
 
-    private final SpringDataDiscrepancyRepository jpa;
-
-    JpaDiscrepancyRepository(SpringDataDiscrepancyRepository jpa) {
+    DiscrepanciesRepositoryAdapter(DiscrepanciesJpaRepository jpa) {
         this.jpa = jpa;
     }
 
@@ -57,11 +51,6 @@ class JpaDiscrepancyRepository implements DiscrepancyRepository {
     }
 
     @Override
-    public boolean existsUnclosed(UUID receptionId, UUID materialId, DiscrepancyType type) {
-        return jpa.existsByReceptionIdAndMaterialIdAndTypeAndStatusIn(receptionId, materialId, type, UNCLOSED);
-    }
-
-    @Override
     public List<Discrepancy> search(DiscrepancyFilter filter) {
         Specification<DiscrepancyJpaEntity> spec = (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
@@ -82,7 +71,7 @@ class JpaDiscrepancyRepository implements DiscrepancyRepository {
             }
             return cb.and(predicates.toArray(Predicate[]::new));
         };
-        return jpa.findAll(spec, Sort.by(Sort.Order.desc("openedAt"), Sort.Order.desc("id"))).stream()
+        return jpa.findAll(spec, Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"))).stream()
                 .map(DiscrepancyJpaEntity::toDomain).toList();
     }
 }

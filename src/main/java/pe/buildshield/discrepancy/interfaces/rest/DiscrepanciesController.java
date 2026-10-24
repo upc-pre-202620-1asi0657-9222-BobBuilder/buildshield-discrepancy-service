@@ -24,15 +24,16 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
-import pe.buildshield.discrepancy.application.DiscrepancyCommandService;
-import pe.buildshield.discrepancy.application.DiscrepancyQueryService;
+import pe.buildshield.discrepancy.application.DiscrepanciesCommandService;
+import pe.buildshield.discrepancy.application.DiscrepanciesQueryService;
 import pe.buildshield.discrepancy.application.EvidenceUrlSigner;
 import pe.buildshield.discrepancy.shared.tenant.TenantContext;
 import pe.buildshield.discrepancy.domain.model.Discrepancy;
 import pe.buildshield.discrepancy.domain.model.DiscrepancyStatus;
 import pe.buildshield.discrepancy.domain.model.DiscrepancyType;
 import pe.buildshield.discrepancy.domain.model.Evidence;
-import pe.buildshield.discrepancy.domain.model.Note;
+import pe.buildshield.discrepancy.domain.model.Resolution;
+import pe.buildshield.discrepancy.domain.model.Response;
 import pe.buildshield.discrepancy.shared.error.ErrorResponse;
 
 import java.io.IOException;
@@ -47,13 +48,13 @@ import java.util.function.Function;
 @RequestMapping("/api/v1/discrepancies")
 @Tag(name = "Discrepancias", description = "US36: discrepancias de la recepción con evidencia, respuesta y resolución")
 @SecurityRequirement(name = "bearer")
-class DiscrepancyController {
+class DiscrepanciesController {
 
-    private final DiscrepancyCommandService commands;
-    private final DiscrepancyQueryService queries;
+    private final DiscrepanciesCommandService commands;
+    private final DiscrepanciesQueryService queries;
     private final EvidenceUrlSigner signer;
 
-    DiscrepancyController(DiscrepancyCommandService commands, DiscrepancyQueryService queries,
+    DiscrepanciesController(DiscrepanciesCommandService commands, DiscrepanciesQueryService queries,
             EvidenceUrlSigner signer) {
         this.commands = commands;
         this.queries = queries;
@@ -64,24 +65,6 @@ class DiscrepancyController {
         UUID organizationId = TenantContext.require().organizationId();
         return DiscrepancyResource.of(organizationId, discrepancy,
                 evidence -> signer.signedUrl(organizationId, discrepancy.id(), evidence));
-    }
-
-    @PostMapping
-    @PreAuthorize("hasRole('SITE_MANAGER')")
-    @Operation(summary = "Registrar una discrepancia",
-            description = "El encargado de obra registra otra diferencia de una recepción de su obra (por ejemplo, "
-                    + "un daño dentro de la tolerancia). Las de las líneas fuera de tolerancia se abren solas al "
-                    + "confirmar la recepción.")
-    @ApiResponse(responseCode = "201", description = "Discrepancia abierta",
-            content = @Content(schema = @Schema(implementation = DiscrepancyResource.class),
-                    examples = @ExampleObject(value = DiscrepancyApiExamples.DISCREPANCY)))
-    @ApiResponse(responseCode = "404", description = "Recepción o material inexistentes o de otra obra",
-            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
-    ResponseEntity<DiscrepancyResource> create(@Valid @RequestBody CreateRequest request) {
-        Discrepancy created = commands.create(new DiscrepancyCommandService.CreateDiscrepancy(request.receptionId(),
-                request.materialId(), request.type(), request.quantity(), request.observation()));
-        return ResponseEntity.created(URI.create("/api/v1/discrepancies/" + created.id()))
-                .body(resource(created));
     }
 
     @GetMapping
@@ -131,10 +114,11 @@ class DiscrepancyController {
             example = DiscrepancyApiExamples.DISCREPANCY_ID) @PathVariable UUID id,
             @Parameter(description = "Foto JPG, PNG o WEBP de hasta 5 MB") @RequestPart("file") MultipartFile file)
             throws IOException {
-        Evidence evidence = commands.addEvidence(id, new DiscrepancyCommandService.EvidenceUpload(
+        Evidence evidence = commands.addEvidence(id, new DiscrepanciesCommandService.EvidenceUpload(
                 file.getOriginalFilename(), file.getContentType(), file.getBytes()));
         String url = signer.signedUrl(TenantContext.require().organizationId(), id, evidence);
-        return ResponseEntity.created(URI.create(evidence.url())).body(EvidenceResource.of(evidence, url));
+        return ResponseEntity.created(URI.create(EvidenceUrlSigner.contentPath(id, evidence.id())))
+                .body(EvidenceResource.of(evidence, url));
     }
 
     @GetMapping("/{id}/evidences/{evidenceId}/content")
@@ -212,14 +196,6 @@ class DiscrepancyController {
         return resource(commands.resolve(id, request.decision()));
     }
 
-    @Schema(description = "Discrepancia registrada a mano")
-    record CreateRequest(@NotNull UUID receptionId, @NotNull UUID materialId,
-            @Schema(example = "DAMAGE") @NotNull DiscrepancyType type,
-            @Schema(example = "2") @NotNull BigDecimal quantity,
-            @Schema(description = "De 3 a 500 caracteres", example = "Dos bolsas rotas en la descarga")
-            String observation) {
-    }
-
     @Schema(description = "Respuesta del almacén")
     record TextRequest(@Schema(description = "De 3 a 500 caracteres", example = "Se repone mañana") String text) {
     }
@@ -234,54 +210,64 @@ class DiscrepancyController {
             example = "Se descuenta al transportista") String decision) {
     }
 
-    @Schema(description = "Paso registrado con su autor")
+    @Schema(description = "Respuesta del almacén con su autor")
     record ResponseNote(String text, UUID by, Instant at) {
-        static ResponseNote of(Note note) {
-            return note == null ? null : new ResponseNote(note.text(), note.by(), note.at());
+        static ResponseNote of(Response step) {
+            return new ResponseNote(step.comment(), step.authorId(), step.createdAt());
         }
     }
 
     @Schema(description = "Escalamiento")
     record EscalationNote(String reason, UUID by, Instant at) {
-        static EscalationNote of(Note note) {
-            return note == null ? null : new EscalationNote(note.text(), note.by(), note.at());
+        static EscalationNote of(Response step) {
+            return new EscalationNote(step.comment(), step.authorId(), step.createdAt());
         }
     }
 
     @Schema(description = "Resolución")
     record ResolutionNote(String decision, UUID by, Instant at) {
-        static ResolutionNote of(Note note) {
-            return note == null ? null : new ResolutionNote(note.text(), note.by(), note.at());
+        static ResolutionNote of(Resolution resolution) {
+            return new ResolutionNote(resolution.decision(), resolution.resolvedBy(), resolution.resolvedAt());
+        }
+    }
+
+    @Schema(description = "Paso del seguimiento (discrepancy_responses)")
+    record ResponseResource(UUID id, @Schema(example = "RESPOND") Response.Decision decision, UUID authorId,
+            String comment, Instant createdAt) {
+        static ResponseResource of(Response step) {
+            return new ResponseResource(step.id(), step.decision(), step.authorId(), step.comment(), step.createdAt());
         }
     }
 
     @Schema(description = "Foto de evidencia")
-    record EvidenceResource(UUID id, String url, String fileName, UUID uploadedBy, Instant uploadedAt) {
+    record EvidenceResource(UUID id, String url, String fileName, Instant uploadedAt) {
         static EvidenceResource of(Evidence evidence, String signedUrl) {
-            return new EvidenceResource(evidence.id(), signedUrl, evidence.fileName(), evidence.uploadedBy(),
-                    evidence.uploadedAt());
+            return new EvidenceResource(evidence.id(), signedUrl, evidence.fileName(), evidence.uploadedAt());
         }
     }
 
     @Schema(description = "Discrepancia")
-    record DiscrepancyResource(UUID id, UUID organizationId, UUID receptionId, UUID dispatchId, String manifestCode,
-            UUID worksiteId, UUID warehouseId, UUID materialId, String sku, String materialName, DiscrepancyType type,
-            String typeLabel, BigDecimal quantity, BigDecimal shrinkagePercent, BigDecimal tolerancePercent,
-            String observation, DiscrepancyStatus status, String statusLabel, UUID openedBy, Instant openedAt,
-            ResponseNote response, EscalationNote escalation, ResolutionNote resolution,
-            List<EvidenceResource> evidences) {
+    record DiscrepancyResource(UUID id, UUID organizationId, UUID receptionId, UUID receptionLineId, UUID dispatchId,
+            String manifestCode, UUID worksiteId, UUID warehouseId, UUID materialId, String sku, String materialName,
+            String unit, DiscrepancyType type, String typeLabel, BigDecimal quantity, String reason,
+            DiscrepancyStatus status, String statusLabel, UUID openedBy, Instant openedAt, Instant escalatedAt,
+            Instant resolvedAt, ResponseNote response, EscalationNote escalation, ResolutionNote resolution,
+            List<ResponseResource> responses, List<EvidenceResource> evidences) {
 
         static DiscrepancyResource of(UUID organizationId, Discrepancy discrepancy,
                 Function<Evidence, String> signedUrl) {
             var reception = discrepancy.reception();
             var material = discrepancy.material();
-            return new DiscrepancyResource(discrepancy.id(), organizationId, reception.receptionId(), reception.dispatchId(),
-                    reception.manifestCode(), reception.worksiteId(), reception.warehouseId(), material.materialId(),
-                    material.sku(), material.name(), discrepancy.type(), discrepancy.type().label(),
-                    discrepancy.quantity(), discrepancy.shrinkagePercent(), discrepancy.tolerancePercent(),
-                    discrepancy.observation(), discrepancy.status(), discrepancy.status().label(),
-                    discrepancy.openedBy(), discrepancy.openedAt(), ResponseNote.of(discrepancy.response()),
-                    EscalationNote.of(discrepancy.escalation()), ResolutionNote.of(discrepancy.resolution()),
+            return new DiscrepancyResource(discrepancy.id(), organizationId, reception.receptionId(),
+                    reception.receptionLineId(), reception.dispatchId(), reception.manifestCode(),
+                    reception.worksiteId(), reception.warehouseId(), material.materialId(), material.sku(),
+                    material.name(), material.unit(), discrepancy.type(), discrepancy.type().label(),
+                    discrepancy.quantity(), discrepancy.reason(), discrepancy.status(), discrepancy.status().label(),
+                    discrepancy.openedBy(), discrepancy.openedAt(), discrepancy.escalatedAt(),
+                    discrepancy.resolvedAt(), discrepancy.response().map(ResponseNote::of).orElse(null),
+                    discrepancy.escalation().map(EscalationNote::of).orElse(null),
+                    discrepancy.resolution().map(ResolutionNote::of).orElse(null),
+                    discrepancy.responses().stream().map(ResponseResource::of).toList(),
                     discrepancy.evidences().stream()
                             .map(evidence -> EvidenceResource.of(evidence, signedUrl.apply(evidence))).toList());
         }

@@ -18,23 +18,8 @@ public class EvidenceJpaEntity extends OrganizationScopedEntity {
     @Column(name = "id", nullable = false, updatable = false)
     private UUID id;
 
-    @Column(name = "storage_key", nullable = false, length = 300, updatable = false)
-    private String storageKey;
-
-    @Column(name = "url", nullable = false, length = 500, updatable = false)
-    private String url;
-
-    @Column(name = "file_name", nullable = false, length = 255, updatable = false)
-    private String fileName;
-
-    @Column(name = "content_type", nullable = false, length = 50, updatable = false)
-    private String contentType;
-
-    @Column(name = "size_bytes", nullable = false, updatable = false)
-    private long sizeBytes;
-
-    @Column(name = "uploaded_by", nullable = false, updatable = false)
-    private UUID uploadedBy;
+    @Column(name = "photo_url", nullable = false, length = 255, updatable = false)
+    private String photoUrl;
 
     @Column(name = "uploaded_at", nullable = false, updatable = false)
     private Instant uploadedAt;
@@ -44,12 +29,7 @@ public class EvidenceJpaEntity extends OrganizationScopedEntity {
 
     EvidenceJpaEntity(Evidence evidence) {
         id = evidence.id();
-        storageKey = evidence.storageKey();
-        url = evidence.url();
-        fileName = evidence.fileName();
-        contentType = evidence.contentType();
-        sizeBytes = evidence.sizeBytes();
-        uploadedBy = evidence.uploadedBy();
+        photoUrl = evidence.photoUrl();
         uploadedAt = evidence.uploadedAt();
     }
 
@@ -58,6 +38,6 @@ public class EvidenceJpaEntity extends OrganizationScopedEntity {
     }
 
     Evidence toDomain() {
-        return new Evidence(id, storageKey, url, fileName, contentType, sizeBytes, uploadedBy, uploadedAt);
+        return new Evidence(id, photoUrl, uploadedAt);
     }
 }

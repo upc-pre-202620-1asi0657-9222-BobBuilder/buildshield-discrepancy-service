@@ -4,7 +4,7 @@ import java.util.Optional;
 
 /**
  * Puerto del almacenamiento de las fotos de evidencia. En la arquitectura v4 lo implementa Amazon S3; en local y
- * en pruebas, una carpeta del disco. El dominio guarda solo la clave y la URL de consulta.
+ * en pruebas, una carpeta del disco. El dominio guarda solo la clave ({@code photo_url}).
  */
 public interface EvidenceStorage {
 

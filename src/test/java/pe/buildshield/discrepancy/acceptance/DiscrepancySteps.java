@@ -75,13 +75,6 @@ public class DiscrepancySteps {
                 type));
     }
 
-    @Dado("que el catálogo tiene el material {string} con SKU {string} y tolerancia {string} %")
-    public void material(String name, String sku, String tolerance) {
-        UUID id = UUID.randomUUID();
-        materials.put(sku, id);
-        send("buildshield.organization", id, events().material(id, sku, name, tolerance));
-    }
-
     @Dado("que {string} abrió la recepción del despacho {string} del {string} a {string}")
     public void receptionOpened(String name, String manifest, String warehouse, String worksite) {
         Reception reception = Reception.random(manifest, place(worksite), place(warehouse));
@@ -145,30 +138,6 @@ public class DiscrepancySteps {
         throw new AssertionError("No está la discrepancia de " + sku + ": " + session.body());
     }
 
-    @Cuando("{string} registra la discrepancia {string} de {string} por {string} en {string} con la observación {string}")
-    public void create(String name, String type, String sku, String quantity, String manifest, String observation)
-            throws Exception {
-        awaitEvents();
-        signIn(name);
-        session.send(post("/api/v1/discrepancies").idempotencyKey(session.key("alta " + sku)), Map.of(
-                "receptionId", receptions.get(manifest).receptionId(), "materialId", materials.get(sku),
-                "type", type(type), "quantity", quantity, "observation", observation));
-        if (session.status() == 201) {
-            session.put("discrepancia " + sku, UUID.fromString(session.body().path("id").asText()));
-        }
-    }
-
-    @Cuando("{string} repite el registro de la discrepancia de {string} con la misma clave")
-    public void repeatCreate(String name, String sku) throws Exception {
-        String first = session.body().path("id").asText();
-        session.send(post("/api/v1/discrepancies").idempotencyKey(session.key("alta " + sku)), Map.of(
-                "receptionId", receptions.values().iterator().next().receptionId(), "materialId", materials.get(sku),
-                "type", "DAMAGE", "quantity", "2", "observation", "Dos bolsas rotas en la descarga"));
-        session.expectStatus(201);
-        assertThat(session.last().replayed()).isEqualTo("true");
-        assertThat(session.body().path("id").asText()).isEqualTo(first);
-    }
-
     @Cuando("{string} sube la foto {string} de tipo {string} a la discrepancia de {string}")
     public void upload(String name, String fileName, String contentType, String sku) throws Exception {
         signIn(name);
@@ -198,7 +167,18 @@ public class DiscrepancySteps {
             case "resuelve" -> Map.of("decision", text);
             default -> null;
         };
-        session.send(post(path).idempotencyKey(UUID.randomUUID().toString()), body);
+        session.send(post(path).idempotencyKey(session.key(action + " " + sku)), body);
+    }
+
+    @Cuando("{string} repite la respuesta de la discrepancia de {string} con la misma clave")
+    public void repeatResponse(String name, String sku) throws Exception {
+        signIn(name);
+        String version = session.body().path("responses").toString();
+        session.send(post("/api/v1/discrepancies/" + session.id("discrepancia " + sku) + "/response")
+                .idempotencyKey(session.key("responde " + sku)), Map.of("text", "Se repone mañana"));
+        session.expectStatus(200);
+        assertThat(session.last().replayed()).isEqualTo("true");
+        assertThat(session.body().path("responses").toString()).isEqualTo(version);
     }
 
     @Cuando("{string} consulta la discrepancia de {string}")
@@ -252,7 +232,7 @@ public class DiscrepancySteps {
         String id = session.id("discrepancia " + sku).toString();
         await().atMost(EVENT_TIMEOUT).until(() -> jdbc.queryForObject("""
                 SELECT count(*) FROM outbox_events WHERE event_type = ? AND aggregate_id = ?""", Long.class,
-                eventType, id) == 1);
+                eventType, UUID.fromString(id)) == 1);
     }
 
     private void send(String topic, UUID key, String message) {
@@ -278,15 +258,6 @@ public class DiscrepancySteps {
 
     private UUID place(String name) {
         return places.computeIfAbsent(name, ignored -> UUID.randomUUID());
-    }
-
-    private static String type(String label) {
-        return switch (label.toLowerCase()) {
-            case "faltante" -> "SHORTAGE";
-            case "daño" -> "DAMAGE";
-            case "exceso" -> "EXCESS";
-            default -> "WRONG_MATERIAL";
-        };
     }
 
     private static String role(String displayName) {

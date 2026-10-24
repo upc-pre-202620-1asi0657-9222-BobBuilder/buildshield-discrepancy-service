@@ -13,8 +13,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
-import pe.buildshield.discrepancy.application.DiscrepancyCommandService;
-import pe.buildshield.discrepancy.application.DiscrepancyQueryService;
+import pe.buildshield.discrepancy.application.DiscrepanciesCommandService;
+import pe.buildshield.discrepancy.application.DiscrepanciesQueryService;
 import pe.buildshield.discrepancy.domain.model.Discrepancy;
 import pe.buildshield.discrepancy.shared.tenant.TenantContext;
 import pe.buildshield.discrepancy.shared.tenant.TenantInfo;
@@ -36,7 +36,7 @@ import static org.awaitility.Awaitility.await;
 /**
  * QAS10 contra Kafka embebido y PostgreSQL real: {@code ReceptionConfirmed} entregado dos veces, y otra vez con otro
  * eventId, abre una sola discrepancia por línea fuera de tolerancia; el outbox publica {@code DiscrepancyOpened} con
- * los campos que leen notification y audit.
+ * los campos que leen notification y audit. Después se sube una evidencia y se responde, escala y resuelve.
  */
 @DiscrepancyIntegrationTest
 class DiscrepancyMessagingIT {
@@ -51,13 +51,13 @@ class DiscrepancyMessagingIT {
     ObjectMapper json;
 
     @Autowired
-    DiscrepancyOutboxPublisher publisher;
+    DiscrepanciesOutboxPublisher publisher;
 
     @Autowired
-    DiscrepancyQueryService queries;
+    DiscrepanciesQueryService queries;
 
     @Autowired
-    DiscrepancyCommandService commands;
+    DiscrepanciesCommandService commands;
 
     @Value("${spring.kafka.bootstrap-servers}")
     String bootstrapServers;
@@ -95,7 +95,11 @@ class DiscrepancyMessagingIT {
                 "SELECT count(*) FROM processed_events", Long.class) == 4);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM discrepancies WHERE organization_id = ?", Long.class,
                 organization)).isEqualTo(2);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM reception_line_projection", Long.class)).isEqualTo(3);
+        assertThat(jdbc.queryForObject("SELECT count(DISTINCT reception_line_id) FROM discrepancies", Long.class))
+                .isEqualTo(2);
+        assertThat(jdbc.queryForList("SELECT consumer FROM processed_events", String.class))
+                .containsExactlyInAnyOrder("AssignmentEventConsumer", "AssignmentEventConsumer",
+                        "ReceptionEventConsumer", "ReceptionEventConsumer");
 
         TenantInfo luisSession = new TenantInfo(organization, luis, "SITE_MANAGER");
         List<Discrepancy> visible = TenantContext.callAs(luisSession, () -> queries.list(null, null, null));
@@ -116,14 +120,15 @@ class DiscrepancyMessagingIT {
         assertThat(opened.at("/payload/manifestCode").asText()).isEqualTo("MAN-0007");
         assertThat(opened.at("/payload/materialName").asText()).isEqualTo("Cemento Portland");
         assertThat(opened.at("/payload/status").asText()).isEqualTo("OPEN");
-        assertThat(opened.at("/payload/type").asText()).isEqualTo("SHORTAGE");
+        assertThat(opened.at("/payload/type").asText()).isEqualTo("SHRINKAGE");
+        assertThat(opened.at("/payload/unit").asText()).isEqualTo("BAG");
         assertThat(opened.at("/payload/openedBy").asText()).isEqualTo(luis.toString());
         assertThat(opened.at("/payload/quantity").decimalValue()).isEqualByComparingTo("3");
-        assertThat(opened.at("/payload/text").asText()).contains("Despachado 40, recibido 37");
+        assertThat(opened.at("/payload/text").asText()).isEqualTo("Merma de 7.5 % sobre 2.5 % tolerado");
 
         UUID id = UUID.fromString(opened.at("/payload/discrepancyId").asText());
         Discrepancy withPhoto = TenantContext.callAs(luisSession, () -> {
-            commands.addEvidence(id, new DiscrepancyCommandService.EvidenceUpload("foto.png", "image/png",
+            commands.addEvidence(id, new DiscrepanciesCommandService.EvidenceUpload("foto.png", "image/png",
                     pe.buildshield.discrepancy.support.TestImages.PNG));
             return queries.get(id);
         });
@@ -132,6 +137,21 @@ class DiscrepancyMessagingIT {
                 .isEqualTo(organization);
         assertThat(TenantContext.callAs(luisSession, () -> queries.evidence(id, withPhoto.evidences().get(0).id()))
                 .content()).isEqualTo(pe.buildshield.discrepancy.support.TestImages.PNG);
+        assertThat(jdbc.queryForObject("SELECT photo_url FROM discrepancy_evidences", String.class))
+                .isEqualTo(organization + "/" + id + "/" + withPhoto.evidences().get(0).id() + ".png");
+
+        TenantInfo admin = new TenantInfo(organization, UUID.randomUUID(), "ADMINISTRATOR");
+        TenantContext.callAs(admin, () -> commands.respond(id, "Se repone mañana"));
+        TenantContext.callAs(luisSession, () -> commands.escalate(id, "No llegó la reposición"));
+        Discrepancy resolved = TenantContext.callAs(admin, () -> commands.resolve(id, "Se descuenta al transportista"));
+        assertThat(resolved.status()).isEqualTo(pe.buildshield.discrepancy.domain.model.DiscrepancyStatus.RESOLVED);
+        assertThat(resolved.evidences()).hasSize(1);
+        assertThat(resolved.responses()).hasSize(3);
+        assertThat(jdbc.queryForList("SELECT decision FROM discrepancy_responses WHERE discrepancy_id = ? "
+                + "ORDER BY created_at, decision", String.class, id)).containsExactly("RESPOND", "ESCALATE", "RESOLVE");
+        assertThat(jdbc.queryForObject("SELECT escalated_at IS NOT NULL AND resolved_at IS NOT NULL FROM discrepancies "
+                + "WHERE id = ?", Boolean.class, id)).isTrue();
+        assertThat(publisher.publishPending()).isEqualTo(3);
     }
 
     private List<JsonNode> read(UUID organizationId, int expected) throws Exception {
