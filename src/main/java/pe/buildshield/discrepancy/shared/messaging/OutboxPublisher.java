@@ -16,8 +16,11 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Envía a Kafka los eventos pendientes de {@code outbox_events}, en orden de ocurrencia, con el
@@ -35,6 +38,7 @@ public class OutboxPublisher {
     public static final String EVENT_TYPE_HEADER = "eventType";
 
     private static final Logger log = LoggerFactory.getLogger(OutboxPublisher.class);
+    private static final Pattern AGGREGATE_PREFIX = Pattern.compile("^[A-Z][a-z0-9]*");
 
     private final JdbcTemplate jdbc;
     private final KafkaTemplate<String, String> kafka;
@@ -69,12 +73,12 @@ public class OutboxPublisher {
         try {
             Integer sent = transactionTemplate.execute(status -> {
                 List<PendingEvent> pending = jdbc.query("""
-                        SELECT id, event_type, aggregate_type, aggregate_id, organization_id, actor_id, correlation_id,
-                               payload, occurred_at
+                        SELECT id, event_type, aggregate_id, organization_id, actor_id, correlation_id, payload,
+                               occurred_at
                         FROM outbox_events WHERE published_at IS NULL
                         ORDER BY occurred_at, id LIMIT ? FOR UPDATE SKIP LOCKED
                         """, (rs, row) -> new PendingEvent(rs.getObject("id", UUID.class), rs.getString("event_type"),
-                        rs.getString("aggregate_type"), rs.getString("aggregate_id"),
+                        rs.getString("aggregate_id"),
                         rs.getObject("organization_id", UUID.class), rs.getObject("actor_id", UUID.class),
                         rs.getString("correlation_id"), rs.getString("payload"),
                         rs.getTimestamp("occurred_at").toInstant()), batchSize);
@@ -97,7 +101,7 @@ public class OutboxPublisher {
         String value;
         try {
             value = json.writeValueAsString(new EventEnvelope(event.id(), event.eventType(), event.occurredAt(),
-                    event.organizationId(), event.aggregateType(), event.aggregateId(), event.actorId(),
+                    event.organizationId(), aggregateType(event.eventType()), event.aggregateId(), event.actorId(),
                     EventEnvelope.CURRENT_VERSION, json.readTree(event.payload())));
         } catch (JsonProcessingException ex) {
             throw new IllegalStateException("Evento " + event.id() + " con payload inválido", ex);
@@ -117,7 +121,16 @@ public class OutboxPublisher {
         }
     }
 
-    private record PendingEvent(UUID id, String eventType, String aggregateType, String aggregateId,
+    /**
+     * Tipo de agregado del sobre, deducido del tipo de evento: la primera palabra en mayúsculas
+     * ({@code DiscrepancyOpened} → {@code DISCREPANCY}). La tabla {@code outbox_events} ya no lo guarda (v4, A.5).
+     */
+    static String aggregateType(String eventType) {
+        Matcher matcher = AGGREGATE_PREFIX.matcher(eventType);
+        return (matcher.find() ? matcher.group() : eventType).toUpperCase(Locale.ROOT);
+    }
+
+    private record PendingEvent(UUID id, String eventType, String aggregateId,
             UUID organizationId, UUID actorId, String correlationId, String payload, Instant occurredAt) {
     }
 }
