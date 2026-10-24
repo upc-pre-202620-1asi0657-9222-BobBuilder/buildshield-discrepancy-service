@@ -25,6 +25,10 @@ class ModuleBoundariesTest {
             ArchitectureRules.domainIsFrameworkFree(SERVICE_PACKAGE);
 
     @ArchTest
+    static final ArchRule controllers_do_not_use_repositories =
+            ArchitectureRules.controllersDoNotUseRepositories(SERVICE_PACKAGE);
+
+    @ArchTest
     static final ArchRule shared_kernel_does_not_depend_on_the_service =
             ArchitectureRules.sharedKernelIsIndependent(SERVICE_PACKAGE);
 
@@ -46,6 +50,15 @@ class ModuleBoundariesTest {
             assertThat(result.hasViolation()).isTrue();
             assertThat(result.getFailureReport().getDetails())
                     .anyMatch(line -> line.contains("BetaService") && line.contains("AlphaRepository"));
+        }
+
+        @Test
+        void detects_a_controller_using_a_repository() {
+            EvaluationResult result = ArchitectureRules.controllersDoNotUseRepositories(FIXTURES).evaluate(fixtures);
+
+            assertThat(result.hasViolation()).isTrue();
+            assertThat(result.getFailureReport().getDetails())
+                    .anyMatch(line -> line.contains("GammaController") && line.contains("GammaRepository"));
         }
 
         @Test

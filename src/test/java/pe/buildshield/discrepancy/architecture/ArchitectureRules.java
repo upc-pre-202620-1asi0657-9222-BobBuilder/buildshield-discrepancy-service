@@ -45,6 +45,15 @@ final class ArchitectureRules {
                 .because("el kernel compartido se copia sin cambios entre servicios");
     }
 
+    /** Los controladores REST usan los servicios de aplicación, nunca los repositorios (A.11). */
+    static ArchRule controllersDoNotUseRepositories(String rootPackage) {
+        return noClasses()
+                .that().resideInAPackage(rootPackage + "..interfaces..")
+                .should().dependOnClassesThat().haveSimpleNameEndingWith("Repository")
+                .orShould().dependOnClassesThat().resideInAPackage(rootPackage + "..infrastructure.persistence..")
+                .because("los controladores no tocan repositorios");
+    }
+
     /** El dominio es Java puro: no depende de Spring, JPA ni Hibernate. */
     static ArchRule domainIsFrameworkFree(String rootPackage) {
         return noClasses()
