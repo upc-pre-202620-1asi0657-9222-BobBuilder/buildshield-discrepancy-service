@@ -21,8 +21,11 @@ Se eliminaron `material_projection`, `reception_projection` y `reception_line_pr
 | `discrepancies` | `version` | Bloqueo optimista entre respuestas simultáneas desde el celular (kernel compartido). |
 | `discrepancies` | `created_at`, `created_by`, `updated_at`, `updated_by` | Auditoría del kernel compartido. `created_by` y `created_at` son quién y cuándo se abrió la discrepancia (`openedBy` y `openedAt` en la API y en los eventos). |
 | `discrepancy_evidences`, `discrepancy_responses` | `organization_id` | Regla común A.5: toda tabla de negocio lleva `organization_id` con índice que empieza por ella. Es el filtro multiempresa de Hibernate. |
-| `outbox_events` | `actor_id` | Va en el sobre del evento (`actorId`, A.6). Lo leen audit y notification. |
 | `outbox_events` | `correlation_id` | Cabecera Kafka de correlación para seguir una operación entre servicios. |
+
+## Outbox
+
+- `outbox_events` ya no tiene `actor_id` (migración V3). El sobre completo del evento, con `aggregateType` y `actorId` (A.6), se guarda en `payload` y el publicador lo envía tal cual, como en iam. Audit y notification siguen leyendo `actorId` del sobre.
 
 ## Componentes fuera del C4
 
