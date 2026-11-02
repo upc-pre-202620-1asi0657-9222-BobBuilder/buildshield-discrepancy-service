@@ -8,8 +8,16 @@ con las reglas del Anexo A.10 de la tarea. Todo lo que no está aquí coincide c
 | Tabla | Motivo |
 |---|---|
 | `assignment_projection` | Copia de `StaffAssigned` y `StaffUnassigned` de organization: qué obras ve cada encargado de obra y qué almacenes ve cada encargado de almacén. Sin ella, filtrar la lista y el detalle por rol (QAS04) exigiría llamar a organization por REST. Ya estaba prevista en la tarea como desviación permitida. |
+| `reception_projection` | ERD ampliado por el equipo (migración V4). Copia de `ReceptionOpened` y `ReceptionConfirmed`: `reception_id`, `organization_id`, `dispatch_id`, `manifest_code`, `worksite_id`, `warehouse_id`. `POST /discrepancies` valida con ella que la recepción exista y sea de una obra del encargado, sin llamar a ordering por REST. |
+| `reception_line_projection` | ERD ampliado por el equipo (migración V4). Líneas que trae `ReceptionConfirmed`: `reception_line_id`, `reception_id`, `material_id`, `sku`, `material_name`, `shrinkage_percent`, `tolerance_percent`. Valida que el material sea de la recepción y completa el registro manual. Los nombres vienen de la V1; no se recuperan `confirmed`, `updated_at`, `dispatched` ni `received` porque nada los lee. |
 
-Se eliminaron `material_projection`, `reception_projection` y `reception_line_projection`, porque `ReceptionConfirmed` trae el material, la unidad y las cantidades de cada línea.
+Se eliminó `material_projection`, porque `ReceptionConfirmed` trae el material, la unidad y las cantidades de cada línea.
+
+Límites de la copia de recepciones:
+
+- Las recepciones anteriores a la migración V4 no están en `reception_projection`: `POST /discrepancies` responde 404 `RECEPTION_NOT_FOUND` hasta que llegue un evento nuevo de esa recepción (`ReceptionConfirmed` la crea completa).
+- `ReceptionOpened` no trae líneas: antes de confirmar la recepción, el registro manual responde 404 `MATERIAL_NOT_FOUND`. La web solo ofrece el formulario después de confirmar.
+- La copia no guarda la unidad: la discrepancia manual queda con `unit` nula, igual que en su evento.
 
 ## Columnas extra en tablas del ER
 
@@ -21,6 +29,9 @@ Se eliminaron `material_projection`, `reception_projection` y `reception_line_pr
 | `discrepancies` | `version` | Bloqueo optimista entre respuestas simultáneas desde el celular (kernel compartido). |
 | `discrepancies` | `created_at`, `created_by`, `updated_at`, `updated_by` | Auditoría del kernel compartido. `created_by` y `created_at` son quién y cuándo se abrió la discrepancia (`openedBy` y `openedAt` en la API y en los eventos). |
 | `discrepancy_evidences`, `discrepancy_responses` | `organization_id` | Regla común A.5: toda tabla de negocio lleva `organization_id` con índice que empieza por ella. Es el filtro multiempresa de Hibernate. |
+| `discrepancies` | `observation` (varchar 500, nula) | ERD ampliado (aceptada). Texto libre del registro manual; la API la devuelve como `observation`. Nula en las automáticas y en las filas anteriores a V4. |
+| `discrepancies` | `origin` (varchar 10) | ERD ampliado (aceptada). `AUTOMATIC` o `MANUAL`; las filas anteriores a V4 quedan `AUTOMATIC`. |
+| `discrepancies` | `shrinkage_pct` (numeric 7,2, nula), `tolerance_pct` (numeric 5,2, nula) | ERD ampliado (aceptada). Salen de `ReceptionConfirmed`; la API los devuelve como `shrinkagePercent` y `tolerancePercent`. Nulas en las filas anteriores a V4, porque V2 borró esos datos. |
 | `outbox_events` | `correlation_id` | Cabecera Kafka de correlación para seguir una operación entre servicios. |
 
 ## Outbox
@@ -31,6 +42,7 @@ Se eliminaron `material_projection`, `reception_projection` y `reception_line_pr
 
 | Clase | Motivo |
 |---|---|
+| `ReceptionProjections`, `JdbcReceptionProjections` | Puerto y adaptador de la copia de recepciones (ver arriba). Los alimenta `ReceptionEventConsumer`, de forma idempotente por `processed_events`. |
 | `AssignmentEventConsumer` | Consume `StaffAssigned` y `StaffUnassigned` de `buildshield.organization` y mantiene `assignment_projection` (ver arriba). El C4 solo dibuja `ReceptionEventConsumer`, que consume de ordering. Juntar los dos tópicos en un solo consumidor mezclaría dos contextos. |
 
 Las demás clases nuevas son de apoyo, no componentes de arquitectura (A.4):
@@ -43,8 +55,7 @@ Las demás clases nuevas son de apoyo, no componentes de arquitectura (A.4):
 
 - `discrepancy_responses.decision`: `RESPOND`, `ACCEPT`, `ESCALATE` o `RESOLVE`. El ER no enumera los valores. Una aceptación queda con `comment = 'Respuesta aceptada'`.
 - `idempotency_keys.status`: `COMPLETED` o `EXPIRED`. `response_body` guarda el código HTTP, el tipo, la ubicación, el cuerpo y el dueño (usuario y rol) de la operación. Al vencer la respuesta se borra el cuerpo y se conserva el dueño.
-- Tipo de discrepancia: `SURPLUS` si llegó más de lo despachado. Si llegó menos, `SHRINKAGE` cuando el material admite tolerancia (`tolerancePercent > 0`) y `SHORTAGE` cuando no admite ninguna. El ER no fija la regla; se apoya en el `tolerancePercent` de cada línea.
-
-## Funcionalidad retirada
-
-- `POST /api/v1/discrepancies` (registro manual de una discrepancia por el encargado de obra) y la columna `origin`. Los endpoints de la v4 son listar, ver detalle, subir evidencia, responder, aceptar, escalar y resolver, y el ER exige `reception_line_id`. Sin `reception_projection`, el servicio tampoco podría validar la recepción. La migración `V2` borra las discrepancias manuales que hubiera en la base, con sus evidencias.
+- Tipo de discrepancia automática: `SURPLUS` si llegó más de lo despachado. Si llegó menos, `SHRINKAGE` cuando el material admite tolerancia (`tolerancePercent > 0`) y `SHORTAGE` cuando no admite ninguna. El ER no fija la regla; se apoya en el `tolerancePercent` de cada línea.
+- Tipo de discrepancia manual: `SHORTAGE`, `DAMAGE`, `EXCESS` o `WRONG_MATERIAL`, los del formulario de la web. El check `ck_discrepancies_type` y el enum aceptan la unión de ambos grupos; ningún valor guardado se renombra. `SURPLUS` y `SHRINKAGE` a mano responden 400 `INVALID_DISCREPANCY_TYPE`.
+- `reception_line_id` es nula solo en las manuales (`ck_discrepancies_reception_line`) y sigue siendo única cuando existe (índice parcial `uk_discrepancies_reception_line`). `uk_discrepancies_open` deja a lo más una discrepancia sin cerrar por recepción, material y tipo.
+- `reason` de una discrepancia manual: la observación recortada a 60 caracteres.
