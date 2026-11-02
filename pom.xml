@@ -25,11 +25,19 @@
         <jacoco.version>0.8.15</jacoco.version>
         <!-- Cucumber 7.34 requiere JUnit Platform 1.13+ -->
         <junit-jupiter.version>5.14.4</junit-jupiter.version>
+        <aws.sdk.version>2.31.78</aws.sdk.version>
         <jacoco.minimum.line.coverage>0.80</jacoco.minimum.line.coverage>
     </properties>
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>${aws.sdk.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <dependency>
                 <groupId>io.cucumber</groupId>
                 <artifactId>cucumber-bom</artifactId>
@@ -41,6 +49,26 @@
     </dependencyManagement>
 
     <dependencies>
+        <!-- Evidencias en Amazon S3 (perfil prod) -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>apache-client</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>netty-nio-client</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>url-connection-client</artifactId>
+        </dependency>
+
         <!-- Aplicación -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

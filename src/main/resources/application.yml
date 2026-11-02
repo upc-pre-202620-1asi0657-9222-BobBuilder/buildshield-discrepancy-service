@@ -84,7 +84,8 @@ buildshield:
   messaging:
     topic: buildshield.discrepancy
   evidence:
-    # EvidenceStorageAdapter: carpeta local de las fotos de evidencia (Amazon S3 en la nube).
+    # local: EvidenceStorageAdapter guarda en una carpeta. s3: S3EvidenceStorageAdapter (perfil prod).
+    storage: ${EVIDENCE_STORAGE:local}
     local-dir: ${EVIDENCE_LOCAL_DIR:data/evidence}
     # Firma HMAC de las url de las fotos (al menos 16 caracteres) y su vigencia.
     url-secret: ${EVIDENCE_URL_SECRET:buildshield-dev-evidence-secret}

@@ -9,6 +9,8 @@ spring:
 
 buildshield:
   evidence:
+    storage: s3
+    bucket: ${EVIDENCE_BUCKET}
     url-secret: ${EVIDENCE_URL_SECRET}
   security:
     jwt-public-key: ${BUILDSHIELD_JWT_PUBLIC_KEY}

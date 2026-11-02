@@ -32,6 +32,7 @@ Se eliminaron `material_projection`, `reception_projection` y `reception_line_pr
 
 Las demás clases nuevas son de apoyo, no componentes de arquitectura (A.4):
 - `DiscrepancyVisibility`: filtro por rol que usan los servicios.
+- `S3EvidenceStorageAdapter`: el `EvidenceStorageAdapter` del C4 en la nube; la carpeta local queda para desarrollo y pruebas.
 - `EvidenceUrlSigner`: URL firmada con HMAC.
 - `StaffAssignments`: puerto de dominio de la copia.
 - Entidades JPA, DTO y `Payloads`.

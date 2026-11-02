@@ -1,6 +1,7 @@
 package pe.buildshield.discrepancy.infrastructure.storage;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import pe.buildshield.discrepancy.application.EvidenceStorage;
 
@@ -11,10 +12,11 @@ import java.nio.file.Path;
 import java.util.Optional;
 
 /**
- * Adaptador de {@link EvidenceStorage} sobre una carpeta local (desarrollo y pruebas). En la nube lo reemplaza el
- * adaptador de Amazon S3 con la misma clave de objeto ({@code organización/discrepancia/evidencia.ext}).
+ * Adaptador de {@link EvidenceStorage} sobre una carpeta local (desarrollo y pruebas). En la nube lo reemplaza
+ * {@link S3EvidenceStorageAdapter} con la misma clave de objeto ({@code organización/discrepancia/evidencia.ext}).
  */
 @Component
+@ConditionalOnProperty(name = "buildshield.evidence.storage", havingValue = "local", matchIfMissing = true)
 class EvidenceStorageAdapter implements EvidenceStorage {
 
     private final Path root;
