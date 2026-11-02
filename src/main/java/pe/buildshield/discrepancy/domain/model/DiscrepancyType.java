@@ -2,16 +2,29 @@ package pe.buildshield.discrepancy.domain.model;
 
 import java.math.BigDecimal;
 
-/** Tipo de diferencia entre lo despachado y lo recibido (ER v4: SHORTAGE, SURPLUS o SHRINKAGE). */
+/**
+ * Tipo de diferencia. Las automáticas son SHORTAGE, SURPLUS o SHRINKAGE (ER v4); a mano se registra lo que ofrece el
+ * formulario de la web: SHORTAGE, DAMAGE, EXCESS o WRONG_MATERIAL.
+ */
 public enum DiscrepancyType {
-    SHORTAGE("Faltante"),
-    SURPLUS("Sobrante"),
-    SHRINKAGE("Merma");
+    SHORTAGE("Faltante", true),
+    SURPLUS("Sobrante", false),
+    SHRINKAGE("Merma", false),
+    DAMAGE("Daño", true),
+    EXCESS("Exceso", true),
+    WRONG_MATERIAL("Material equivocado", true);
 
     private final String label;
+    private final boolean manual;
 
-    DiscrepancyType(String label) {
+    DiscrepancyType(String label, boolean manual) {
         this.label = label;
+        this.manual = manual;
+    }
+
+    /** Si la obra puede registrarlo a mano. */
+    public boolean manual() {
+        return manual;
     }
 
     public String label() {

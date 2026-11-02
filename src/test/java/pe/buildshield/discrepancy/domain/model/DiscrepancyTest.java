@@ -69,6 +69,54 @@ class DiscrepancyTest {
     }
 
     @Test
+    void automatic_discrepancies_keep_the_percentages_and_require_their_line() {
+        Discrepancy automatic = Discrepancy.open(reception, cement, new BigDecimal("40"), new BigDecimal("37"),
+                new BigDecimal("7.50"), new BigDecimal("2.50"), LUIS, NOW);
+        assertThat(automatic.origin()).isEqualTo(DiscrepancyOrigin.AUTOMATIC);
+        assertThat(automatic.shrinkagePercent()).isEqualByComparingTo("7.5");
+        assertThat(automatic.tolerancePercent()).isEqualByComparingTo("2.5");
+        assertThat(automatic.observation()).isNull();
+        assertThatThrownBy(() -> Discrepancy.open(manualLink(), cement, new BigDecimal("40"), new BigDecimal("37"),
+                null, null, LUIS, NOW)).isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void manual_discrepancies_take_the_types_of_the_web_form_with_an_observation() {
+        for (DiscrepancyType type : List.of(DiscrepancyType.SHORTAGE, DiscrepancyType.DAMAGE, DiscrepancyType.EXCESS,
+                DiscrepancyType.WRONG_MATERIAL)) {
+            Discrepancy manual = Discrepancy.openManual(manualLink(), cement, type, new BigDecimal("2"), null, null,
+                    "  Dos bolsas rotas  ", LUIS, NOW);
+            assertThat(manual.type()).isEqualTo(type);
+            assertThat(manual.origin()).isEqualTo(DiscrepancyOrigin.MANUAL);
+            assertThat(manual.status()).isEqualTo(DiscrepancyStatus.OPEN);
+            assertThat(manual.observation()).isEqualTo("Dos bolsas rotas");
+            assertThat(manual.reception().receptionLineId()).isNull();
+        }
+        assertThat(DiscrepancyType.DAMAGE.label()).isEqualTo("Daño");
+        assertThat(DiscrepancyType.EXCESS.label()).isEqualTo("Exceso");
+        assertThat(DiscrepancyType.WRONG_MATERIAL.label()).isEqualTo("Material equivocado");
+
+        String longText = "x".repeat(500);
+        Discrepancy longObservation = Discrepancy.openManual(manualLink(), cement, DiscrepancyType.DAMAGE,
+                BigDecimal.ONE, null, null, longText, LUIS, NOW);
+        assertThat(longObservation.observation()).hasSize(500);
+        assertThat(longObservation.reason()).hasSize(Texts.MAX_REASON).endsWith("…");
+
+        for (DiscrepancyType type : new DiscrepancyType[]{DiscrepancyType.SURPLUS, DiscrepancyType.SHRINKAGE, null}) {
+            assertThatThrownBy(() -> Discrepancy.openManual(manualLink(), cement, type, BigDecimal.ONE, null, null,
+                    "Texto", LUIS, NOW)).isInstanceOf(ValidationException.class)
+                    .satisfies(ex -> assertThat(((ValidationException) ex).getCode())
+                            .isEqualTo("INVALID_DISCREPANCY_TYPE"));
+        }
+        assertThatThrownBy(() -> Discrepancy.openManual(manualLink(), cement, DiscrepancyType.DAMAGE, BigDecimal.ZERO,
+                null, null, "Texto", LUIS, NOW)).isInstanceOf(ValidationException.class);
+        assertThatThrownBy(() -> Discrepancy.openManual(manualLink(), cement, DiscrepancyType.DAMAGE, null, null, null,
+                "Texto", LUIS, NOW)).isInstanceOf(ValidationException.class);
+        assertThatThrownBy(() -> Discrepancy.openManual(manualLink(), cement, DiscrepancyType.DAMAGE, BigDecimal.ONE,
+                null, null, "ab", LUIS, NOW)).isInstanceOf(ValidationException.class);
+    }
+
+    @Test
     void responded_then_accepted_closes_the_discrepancy() {
         Discrepancy discrepancy = open();
 
@@ -164,24 +212,24 @@ class DiscrepancyTest {
         Response later = new Response(UUID.randomUUID(), Response.Decision.RESOLVE, ANA, "Decisión", NOW.plusSeconds(5));
         Response earlier = new Response(UUID.randomUUID(), Response.Decision.RESPOND, ROSA, "Texto", NOW);
         Discrepancy restored = Discrepancy.restore(id, link, unnamed, DiscrepancyType.SURPLUS, BigDecimal.ONE,
-                "Sobran 1", DiscrepancyStatus.RESOLVED, LUIS, NOW, NOW, NOW.plusSeconds(5), List.of(later, earlier),
+                "Sobran 1", null, null, null, DiscrepancyOrigin.AUTOMATIC, DiscrepancyStatus.RESOLVED, LUIS, NOW, NOW, NOW.plusSeconds(5), List.of(later, earlier),
                 null, 4L);
         assertThat(restored.id()).isEqualTo(id);
         assertThat(restored.version()).isEqualTo(4L);
         assertThat(restored.responses()).containsExactly(earlier, later);
         assertThat(restored.evidences()).isEmpty();
         assertThat(Discrepancy.restore(id, link, unnamed, DiscrepancyType.SURPLUS, BigDecimal.ONE, "Sobran 1",
-                DiscrepancyStatus.OPEN, LUIS, NOW, null, null, null, List.of(), 0L).responses()).isEmpty();
+                null, null, null, DiscrepancyOrigin.AUTOMATIC, DiscrepancyStatus.OPEN, LUIS, NOW, null, null, null, List.of(), 0L).responses()).isEmpty();
         assertThat(DiscrepancyType.SURPLUS.label()).isEqualTo("Sobrante");
         assertThat(DiscrepancyStatus.RESOLVED.label()).isEqualTo("Resuelta");
         assertThat(DiscrepancyStatus.ESCALATED.closed()).isFalse();
         assertThatThrownBy(() -> new Response(UUID.randomUUID(), Response.Decision.RESPOND, ROSA, null, NOW))
                 .isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> new Resolution(null, ANA, NOW)).isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> new Discrepancy.ReceptionLink(UUID.randomUUID(), null, dispatch, null,
+        assertThatThrownBy(() -> new Discrepancy.ReceptionLink(null, null, dispatch, null,
                 UUID.randomUUID(), UUID.randomUUID())).isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> Discrepancy.restore(null, link, unnamed, DiscrepancyType.SURPLUS, BigDecimal.ONE,
-                "x", DiscrepancyStatus.OPEN, LUIS, NOW, null, null, null, null, 0L))
+                "x", null, null, null, DiscrepancyOrigin.AUTOMATIC, DiscrepancyStatus.OPEN, LUIS, NOW, null, null, null, null, 0L))
                 .isInstanceOf(NullPointerException.class);
     }
 
@@ -190,6 +238,11 @@ class DiscrepancyTest {
         assertThat(new DiscrepancyFilter(null, null, null, null, null).seesNothing()).isFalse();
         assertThat(new DiscrepancyFilter(null, null, null, java.util.Set.of(), null).seesNothing()).isTrue();
         assertThat(new DiscrepancyFilter(null, null, null, null, java.util.Set.of()).seesNothing()).isTrue();
+    }
+
+    private Discrepancy.ReceptionLink manualLink() {
+        return new Discrepancy.ReceptionLink(reception.receptionId(), null, reception.dispatchId(), "MAN-0001",
+                reception.worksiteId(), reception.warehouseId());
     }
 
     private Discrepancy open() {

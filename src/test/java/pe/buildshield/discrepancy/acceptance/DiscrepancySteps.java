@@ -55,6 +55,8 @@ public class DiscrepancySteps {
     private final Map<String, UUID> materials = new HashMap<>();
     private final Map<String, Reception> receptions = new HashMap<>();
     private final Map<String, String> sentConfirmations = new HashMap<>();
+    private Map<String, Object> lastReport;
+    private String lastReportKey;
     private long sent;
 
     private TestEvents events() {
@@ -101,6 +103,74 @@ public class DiscrepancySteps {
         send("buildshield.ordering", receptions.get(manifest).receptionId(), sentConfirmations.get(manifest));
         sent--;
         awaitSentinel(manifest);
+    }
+
+    @Cuando("{string} registra la discrepancia {string} de {string} por {string} en {string} con la observación {string}")
+    public void report(String name, String type, String sku, String quantity, String manifest, String observation)
+            throws Exception {
+        awaitEvents();
+        signIn(name);
+        lastReport = reportBody(receptions.get(manifest).receptionId(), sku, type, quantity, observation);
+        lastReportKey = UUID.randomUUID().toString();
+        session.send(post("/api/v1/discrepancies").idempotencyKey(lastReportKey), lastReport);
+        if (session.status() == 201) {
+            session.put("discrepancia " + sku, UUID.fromString(session.body().path("id").asText()));
+        }
+    }
+
+    @Cuando("{string} repite el registro de la discrepancia de {string} con la misma clave")
+    public void repeatReport(String name, String sku) throws Exception {
+        String first = session.body().path("id").asText();
+        session.send(post("/api/v1/discrepancies").idempotencyKey(lastReportKey), lastReport);
+        session.expectStatus(201);
+        assertThat(session.last().replayed()).isEqualTo("true");
+        assertThat(session.body().path("id").asText()).isEqualTo(first);
+    }
+
+    @Cuando("{string} registra una discrepancia de {string} en una recepción desconocida")
+    public void reportUnknownReception(String name, String sku) throws Exception {
+        awaitEvents();
+        signIn(name);
+        session.send(post("/api/v1/discrepancies").idempotencyKey(UUID.randomUUID().toString()),
+                reportBody(UUID.randomUUID(), sku, "Daño", "2", "Bolsas rotas"));
+    }
+
+    @Cuando("{string} registra sin clave una discrepancia de {string} en {string}")
+    public void reportWithoutKey(String name, String sku, String manifest) throws Exception {
+        awaitEvents();
+        signIn(name);
+        session.send(post("/api/v1/discrepancies"), reportBody(receptions.get(manifest).receptionId(), sku, "Daño", "2",
+                "Bolsas rotas"));
+    }
+
+    private Map<String, Object> reportBody(UUID receptionId, String sku, String type, String quantity,
+            String observation) {
+        return Map.of("receptionId", receptionId, "materialId", materials.computeIfAbsent(sku,
+                ignored -> UUID.randomUUID()), "type", type(type), "quantity", quantity, "observation", observation);
+    }
+
+    @Entonces("la discrepancia registrada tiene la observación {string}, sin línea de recepción y con merma {string} sobre {string}")
+    public void reported(String observation, String shrinkage, String tolerance) throws Exception {
+        session.expectStatus(201);
+        JsonNode body = session.body();
+        assertThat(body.path("observation").asText()).isEqualTo(observation);
+        assertThat(body.path("receptionLineId").isNull()).isTrue();
+        assertThat(body.path("shrinkagePercent").decimalValue()).isEqualByComparingTo(shrinkage);
+        assertThat(body.path("tolerancePercent").decimalValue()).isEqualByComparingTo(tolerance);
+        assertThat(body.path("statusLabel").asText()).isEqualTo("Abierta");
+    }
+
+    @Entonces("la discrepancia de {string} muestra merma {string} sobre {string} sin observación")
+    public void automaticPercentages(String sku, String shrinkage, String tolerance) throws Exception {
+        for (JsonNode discrepancy : session.body()) {
+            if (discrepancy.path("sku").asText().equals(sku)) {
+                assertThat(discrepancy.path("shrinkagePercent").decimalValue()).isEqualByComparingTo(shrinkage);
+                assertThat(discrepancy.path("tolerancePercent").decimalValue()).isEqualByComparingTo(tolerance);
+                assertThat(discrepancy.path("observation").isNull()).isTrue();
+                return;
+            }
+        }
+        throw new AssertionError("No está la discrepancia de " + sku + ": " + session.body());
     }
 
     @Cuando("{string} consulta las discrepancias")
@@ -258,6 +328,16 @@ public class DiscrepancySteps {
 
     private UUID place(String name) {
         return places.computeIfAbsent(name, ignored -> UUID.randomUUID());
+    }
+
+    private static String type(String label) {
+        return switch (label.toLowerCase()) {
+            case "faltante" -> "SHORTAGE";
+            case "daño" -> "DAMAGE";
+            case "exceso" -> "EXCESS";
+            case "sobrante" -> "SURPLUS";
+            default -> "WRONG_MATERIAL";
+        };
     }
 
     private static String role(String displayName) {

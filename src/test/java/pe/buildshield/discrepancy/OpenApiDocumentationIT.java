@@ -33,7 +33,8 @@ class OpenApiDocumentationIT {
                 "/api/v1/discrepancies/{id}/response", "/api/v1/discrepancies/{id}/accept",
                 "/api/v1/discrepancies/{id}/escalate", "/api/v1/discrepancies/{id}/resolve",
                 "/api/v1/discrepancies/{id}/evidences/{evidenceId}/content");
-        assertThat(spec.at("/paths/~1api~1v1~1discrepancies/post").isMissingNode()).isTrue();
+        JsonNode create = spec.at("/paths/~1api~1v1~1discrepancies/post");
+        assertThat(create.path("parameters").toString()).contains("Idempotency-Key");
         JsonNode respond = spec.at("/paths/~1api~1v1~1discrepancies~1{id}~1response/post");
         assertThat(respond.path("parameters").toString()).contains("Idempotency-Key");
         assertThat(spec.at("/paths/~1api~1v1~1discrepancies~1{id}~1evidences/post/requestBody/content")

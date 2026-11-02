@@ -59,7 +59,9 @@ class RoleAuthorizationTest {
     @ParameterizedTest(name = "{0} {1} como {2} → {3}")
     @CsvSource({
             "POST, /api/v1/discrepancies, ANONYMOUS, 401",
-            "POST, /api/v1/discrepancies, SITE_MANAGER, 405",
+            "POST, /api/v1/discrepancies, SITE_MANAGER, 201",
+            "POST, /api/v1/discrepancies, WAREHOUSE_MANAGER, 403",
+            "POST, /api/v1/discrepancies, ADMINISTRATOR, 403",
             "GET, /api/v1/discrepancies, ANONYMOUS, 401",
             "GET, /api/v1/discrepancies, SITE_MANAGER, 200",
             "GET, /api/v1/discrepancies, WAREHOUSE_MANAGER, 200",
@@ -85,6 +87,7 @@ class RoleAuthorizationTest {
     void each_endpoint_answers_by_role(String method, String path, String role, int expected) throws Exception {
         Discrepancy discrepancy = sample();
         Evidence evidence = new Evidence(ID, "org/" + ID + "/" + ID + ".jpg", NOW);
+        when(commands.create(any())).thenReturn(discrepancy);
         when(commands.respond(any(), any())).thenReturn(discrepancy);
         when(commands.accept(any())).thenReturn(discrepancy);
         when(commands.escalate(any(), any())).thenReturn(discrepancy);
@@ -111,13 +114,15 @@ class RoleAuthorizationTest {
     }
 
     private static String body(String url) {
-        return "{\"text\":\"Texto\",\"reason\":\"Motivo\",\"decision\":\"Decisión\"}";
+        return "{\"text\":\"Texto\",\"reason\":\"Motivo\",\"decision\":\"Decisión\",\"receptionId\":\"" + ID
+                + "\",\"materialId\":\"" + ID + "\",\"type\":\"DAMAGE\",\"quantity\":2,\"observation\":\"Rotas\"}";
     }
 
     private static Discrepancy sample() {
         return Discrepancy.restore(ID, new Discrepancy.ReceptionLink(ID, ID, ID, "MAN-1", ID, ID),
                 new Discrepancy.MaterialLink(ID, "CEM-001", "Cemento", "BOLSA"), DiscrepancyType.SHORTAGE,
-                BigDecimal.ONE, "Faltan 1 BOLSA de 10 despachados",
+                BigDecimal.ONE, "Faltan 1 BOLSA de 10 despachados", null, null, null,
+                pe.buildshield.discrepancy.domain.model.DiscrepancyOrigin.AUTOMATIC,
                 pe.buildshield.discrepancy.domain.model.DiscrepancyStatus.OPEN, ID, NOW, null, null, List.of(),
                 List.of(), 0L);
     }

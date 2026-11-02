@@ -9,7 +9,8 @@ import java.util.List;
 public final class TestDatabase {
 
     public static final List<String> TABLES = List.of("discrepancy_evidences", "discrepancy_responses",
-            "discrepancies", "assignment_projection", "idempotency_keys", "outbox_events", "processed_events");
+            "discrepancies", "assignment_projection", "reception_line_projection", "reception_projection",
+            "idempotency_keys", "outbox_events", "processed_events");
 
     private TestDatabase() {
     }

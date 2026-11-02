@@ -1,6 +1,7 @@
 package pe.buildshield.discrepancy.infrastructure.messaging;
 
 import pe.buildshield.discrepancy.application.DiscrepanciesCommandService;
+import pe.buildshield.discrepancy.domain.model.ReceptionProjections;
 import pe.buildshield.discrepancy.domain.model.StaffAssignments;
 import pe.buildshield.discrepancy.shared.messaging.EventEnvelope;
 
@@ -10,8 +11,9 @@ public final class TestConsumers {
     private final ReceptionEventConsumer receptions;
     private final AssignmentEventConsumer assignments;
 
-    public TestConsumers(DiscrepanciesCommandService commands, StaffAssignments staff) {
-        this.receptions = new ReceptionEventConsumer(null, commands);
+    public TestConsumers(DiscrepanciesCommandService commands, StaffAssignments staff,
+            ReceptionProjections projections) {
+        this.receptions = new ReceptionEventConsumer(null, commands, projections);
         this.assignments = new AssignmentEventConsumer(null, staff);
     }
 

@@ -55,7 +55,7 @@ class OpenApiCompletenessIT {
             }
         }
 
-        assertThat(operations).as("operaciones documentadas").hasSizeGreaterThanOrEqualTo(8);
+        assertThat(operations).as("operaciones documentadas").hasSizeGreaterThanOrEqualTo(9);
         assertThat(gaps).as("documentación incompleta").isEmpty();
     }
 

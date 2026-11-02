@@ -15,8 +15,9 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Discrepancia de una línea de recepción fuera de tolerancia (US36): faltante, sobrante o merma de un material entre
- * lo despachado y lo recibido, con sus evidencias y sus respuestas. Transiciones: {@code OPEN → RESPONDED → ACCEPTED}
+ * Discrepancia de una recepción (US36): una línea fuera de tolerancia (faltante, sobrante o merma, se abre sola) u otra
+ * diferencia que registra la obra a mano (por ejemplo, un daño dentro de la tolerancia), con sus evidencias y sus
+ * respuestas. Transiciones: {@code OPEN → RESPONDED → ACCEPTED}
  * o {@code RESPONDED → ESCALATED → RESOLVED}. Una transición inválida es un conflicto (409).
  */
 public class Discrepancy {
@@ -30,6 +31,10 @@ public class Discrepancy {
     private final DiscrepancyType type;
     private final BigDecimal quantity;
     private final String reason;
+    private final BigDecimal shrinkagePercent;
+    private final BigDecimal tolerancePercent;
+    private final String observation;
+    private final DiscrepancyOrigin origin;
     private DiscrepancyStatus status;
     private final UUID openedBy;
     private final Instant openedAt;
@@ -39,13 +44,12 @@ public class Discrepancy {
     private final List<Evidence> evidences;
     private final Long version;
 
-    /** Recepción, línea, despacho y lugares a los que pertenece la discrepancia. */
+    /** Recepción, línea (nula en las manuales), despacho y lugares a los que pertenece la discrepancia. */
     public record ReceptionLink(UUID receptionId, UUID receptionLineId, UUID dispatchId, String manifestCode,
             UUID worksiteId, UUID warehouseId) {
 
         public ReceptionLink {
             Objects.requireNonNull(receptionId, "receptionId");
-            Objects.requireNonNull(receptionLineId, "receptionLineId");
             Objects.requireNonNull(dispatchId, "dispatchId");
             Objects.requireNonNull(worksiteId, "worksiteId");
             Objects.requireNonNull(warehouseId, "warehouseId");
@@ -66,7 +70,8 @@ public class Discrepancy {
     }
 
     private Discrepancy(UUID id, ReceptionLink reception, MaterialLink material, DiscrepancyType type,
-            BigDecimal quantity, String reason, DiscrepancyStatus status, UUID openedBy, Instant openedAt,
+            BigDecimal quantity, String reason, BigDecimal shrinkagePercent, BigDecimal tolerancePercent,
+            String observation, DiscrepancyOrigin origin, DiscrepancyStatus status, UUID openedBy, Instant openedAt,
             Instant escalatedAt, Instant resolvedAt, List<Response> responses, List<Evidence> evidences,
             Long version) {
         this.id = id;
@@ -75,6 +80,13 @@ public class Discrepancy {
         this.type = Objects.requireNonNull(type, "type");
         this.quantity = Objects.requireNonNull(quantity, "quantity");
         this.reason = Objects.requireNonNull(reason, "reason");
+        this.shrinkagePercent = shrinkagePercent;
+        this.tolerancePercent = tolerancePercent;
+        this.observation = observation;
+        this.origin = Objects.requireNonNull(origin, "origin");
+        if (origin == DiscrepancyOrigin.AUTOMATIC) {
+            Objects.requireNonNull(reception.receptionLineId(), "receptionLineId");
+        }
         this.status = Objects.requireNonNull(status, "status");
         this.openedBy = Objects.requireNonNull(openedBy, "openedBy");
         this.openedAt = Objects.requireNonNull(openedAt, "openedAt");
@@ -97,15 +109,35 @@ public class Discrepancy {
         BigDecimal difference = positive(received.subtract(dispatched).abs());
         return new Discrepancy(null, reception, material, type, difference,
                 reason(type, difference, dispatched, material.unit(), shrinkagePercent, tolerancePercent),
-                DiscrepancyStatus.OPEN, openedBy, now, null, null, List.of(), List.of(), null);
+                shrinkagePercent, tolerancePercent, null, DiscrepancyOrigin.AUTOMATIC, DiscrepancyStatus.OPEN, openedBy,
+                now, null, null, List.of(), List.of(), null);
+    }
+
+    /**
+     * Registra a mano otra diferencia de la recepción (por ejemplo, un daño dentro de la tolerancia). El motivo resume
+     * la observación en 60 caracteres.
+     */
+    public static Discrepancy openManual(ReceptionLink reception, MaterialLink material, DiscrepancyType type,
+            BigDecimal quantity, BigDecimal shrinkagePercent, BigDecimal tolerancePercent, String observation,
+            UUID openedBy, Instant now) {
+        if (type == null || !type.manual()) {
+            throw new ValidationException("INVALID_DISCREPANCY_TYPE", "El tipo de discrepancia no se puede registrar",
+                    List.of(new ErrorDetail("type", "SHORTAGE, DAMAGE, EXCESS o WRONG_MATERIAL")));
+        }
+        String text = Texts.require(observation, "observation");
+        return new Discrepancy(null, reception, material, type, positive(quantity), Texts.reason(text),
+                shrinkagePercent, tolerancePercent, text, DiscrepancyOrigin.MANUAL, DiscrepancyStatus.OPEN, openedBy,
+                now, null, null, List.of(), List.of(), null);
     }
 
     public static Discrepancy restore(UUID id, ReceptionLink reception, MaterialLink material, DiscrepancyType type,
-            BigDecimal quantity, String reason, DiscrepancyStatus status, UUID openedBy, Instant openedAt,
+            BigDecimal quantity, String reason, BigDecimal shrinkagePercent, BigDecimal tolerancePercent,
+            String observation, DiscrepancyOrigin origin, DiscrepancyStatus status, UUID openedBy, Instant openedAt,
             Instant escalatedAt, Instant resolvedAt, List<Response> responses, List<Evidence> evidences,
             Long version) {
-        return new Discrepancy(Objects.requireNonNull(id, "id"), reception, material, type, quantity, reason, status,
-                openedBy, openedAt, escalatedAt, resolvedAt, responses, evidences, version);
+        return new Discrepancy(Objects.requireNonNull(id, "id"), reception, material, type, quantity, reason,
+                shrinkagePercent, tolerancePercent, observation, origin, status, openedBy, openedAt, escalatedAt,
+                resolvedAt, responses, evidences, version);
     }
 
     /** El almacén responde (solo abierta). */
@@ -188,9 +220,9 @@ public class Discrepancy {
         String units = unit == null ? "" : " " + unit;
         return Texts.reason(switch (type) {
             case SURPLUS -> "Sobran " + plain(difference) + units + " de " + plain(dispatched) + " despachados";
-            case SHORTAGE -> "Faltan " + plain(difference) + units + " de " + plain(dispatched) + " despachados";
             case SHRINKAGE -> "Merma de " + (shrinkagePercent == null ? plain(difference) + units
                     : plain(shrinkagePercent) + " %") + " sobre " + plain(tolerancePercent) + " % tolerado";
+            default -> "Faltan " + plain(difference) + units + " de " + plain(dispatched) + " despachados";
         });
     }
 
@@ -228,6 +260,23 @@ public class Discrepancy {
 
     public String reason() {
         return reason;
+    }
+
+    public BigDecimal shrinkagePercent() {
+        return shrinkagePercent;
+    }
+
+    public BigDecimal tolerancePercent() {
+        return tolerancePercent;
+    }
+
+    /** Texto libre de la obra; nulo en las automáticas. */
+    public String observation() {
+        return observation;
+    }
+
+    public DiscrepancyOrigin origin() {
+        return origin;
     }
 
     public DiscrepancyStatus status() {

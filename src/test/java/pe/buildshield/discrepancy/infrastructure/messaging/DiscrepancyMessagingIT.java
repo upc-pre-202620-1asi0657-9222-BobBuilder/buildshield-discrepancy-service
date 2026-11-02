@@ -154,6 +154,83 @@ class DiscrepancyMessagingIT {
         assertThat(publisher.publishPending()).isEqualTo(3);
     }
 
+    @Test
+    void reception_events_feed_the_copy_idempotently_and_a_manual_report_flows_like_an_automatic_one() throws Exception {
+        UUID organization = UUID.randomUUID();
+        TestEvents events = new TestEvents(json, organization);
+        UUID worksite = UUID.randomUUID();
+        UUID warehouse = UUID.randomUUID();
+        UUID luis = UUID.randomUUID();
+        UUID cement = UUID.randomUUID();
+        UUID assignment = UUID.randomUUID();
+        Reception reception = Reception.random("MAN-0008", worksite, warehouse);
+        Reception unknown = Reception.random("MAN-0009", worksite, warehouse);
+        String opened = events.receptionOpened(reception, luis);
+        String key = reception.receptionId().toString();
+        Line line = Line.of(cement, "CEM-001", "Cemento Portland", "40", "37", "2.5");
+        String confirmed = events.receptionConfirmed(UUID.randomUUID(), reception, luis, List.of(line));
+
+        kafka.send("buildshield.organization", assignment.toString(), events.assigned(assignment, luis, worksite,
+                "WORKSITE"));
+        kafka.send("buildshield.ordering", key, opened);
+        kafka.send("buildshield.ordering", key, opened);
+        kafka.send("buildshield.ordering", key, confirmed);
+        kafka.send("buildshield.ordering", key, confirmed);
+        kafka.send("buildshield.ordering", key, events.envelope(UUID.randomUUID(), "ReceptionPartiallyReceived",
+                "RECEPTION", reception.receptionId(), luis, TestEvents.map("receptionId", reception.receptionId())));
+        kafka.send("buildshield.ordering", unknown.receptionId().toString(), events.receptionConfirmed(
+                UUID.randomUUID(), unknown, luis, List.of(Line.of(cement, "CEM-001", "Cemento Portland", "10", "10",
+                        "2.5"))));
+        kafka.send("buildshield.ordering", key, events.envelope(UUID.randomUUID(), "ReceptionOpened", "RECEPTION",
+                "x", null, TestEvents.map("receptionId", UUID.randomUUID())));
+
+        await().atMost(Duration.ofSeconds(30)).until(() -> jdbc.queryForObject(
+                "SELECT count(*) FROM processed_events", Long.class) == 6);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM reception_projection WHERE organization_id = ?",
+                Long.class, organization)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM reception_line_projection", Long.class)).isEqualTo(2);
+        assertThat(jdbc.queryForMap("SELECT sku, material_name, shrinkage_percent, tolerance_percent FROM "
+                + "reception_line_projection WHERE reception_line_id = ?", line.receptionLineId()))
+                .containsEntry("sku", "CEM-001").containsEntry("material_name", "Cemento Portland")
+                .containsEntry("shrinkage_percent", new java.math.BigDecimal("7.50"))
+                .containsEntry("tolerance_percent", new java.math.BigDecimal("2.50"));
+
+        Map<String, Object> automatic = jdbc.queryForMap("SELECT origin, observation, shrinkage_pct, tolerance_pct, "
+                + "reception_line_id FROM discrepancies");
+        assertThat(automatic).containsEntry("origin", "AUTOMATIC").containsEntry("observation", null)
+                .containsEntry("shrinkage_pct", new java.math.BigDecimal("7.50"))
+                .containsEntry("tolerance_pct", new java.math.BigDecimal("2.50"))
+                .containsEntry("reception_line_id", line.receptionLineId());
+
+        TenantInfo luisSession = new TenantInfo(organization, luis, "SITE_MANAGER");
+        Discrepancy manual = TenantContext.callAs(luisSession, () -> commands.create(
+                new DiscrepanciesCommandService.CreateDiscrepancy(reception.receptionId(), cement,
+                        pe.buildshield.discrepancy.domain.model.DiscrepancyType.DAMAGE, new java.math.BigDecimal("2"),
+                        "Dos bolsas rotas en la descarga")));
+        Map<String, Object> row = jdbc.queryForMap("SELECT origin, observation, reason, reception_line_id, type, "
+                + "manifest_code, sku, material_name, unit, shrinkage_pct, tolerance_pct FROM discrepancies WHERE id = ?",
+                manual.id());
+        assertThat(row).containsEntry("origin", "MANUAL").containsEntry("reception_line_id", null)
+                .containsEntry("observation", "Dos bolsas rotas en la descarga")
+                .containsEntry("reason", "Dos bolsas rotas en la descarga").containsEntry("type", "DAMAGE")
+                .containsEntry("manifest_code", "MAN-0008").containsEntry("sku", "CEM-001")
+                .containsEntry("material_name", "Cemento Portland").containsEntry("unit", null)
+                .containsEntry("shrinkage_pct", new java.math.BigDecimal("7.50"))
+                .containsEntry("tolerance_pct", new java.math.BigDecimal("2.50"));
+        Discrepancy reread = TenantContext.callAs(luisSession, () -> queries.get(manual.id()));
+        assertThat(reread.origin()).isEqualTo(pe.buildshield.discrepancy.domain.model.DiscrepancyOrigin.MANUAL);
+        assertThat(reread.observation()).isEqualTo("Dos bolsas rotas en la descarga");
+
+        assertThat(publisher.publishPending()).isEqualTo(2);
+        JsonNode published = read(organization, 2).stream().filter(e -> e.at("/payload/type").asText().equals("DAMAGE"))
+                .findFirst().orElseThrow();
+        assertThat(published.get("eventType").asText()).isEqualTo("DiscrepancyOpened");
+        assertThat(published.get("actorId").asText()).isEqualTo(luis.toString());
+        assertThat(published.at("/payload/text").asText()).isEqualTo("Dos bolsas rotas en la descarga");
+        assertThat(published.at("/payload/receptionLineId").isNull()).isTrue();
+        assertThat(published.at("/payload/manifestCode").asText()).isEqualTo("MAN-0008");
+    }
+
     private List<JsonNode> read(UUID organizationId, int expected) throws Exception {
         Map<String, Object> props = Map.of(
                 ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers,

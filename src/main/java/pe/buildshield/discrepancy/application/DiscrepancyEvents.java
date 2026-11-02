@@ -23,8 +23,9 @@ public final class DiscrepancyEvents {
     /**
      * Estado de la discrepancia tras el cambio.
      *
-     * @param unit unidad del material (la que traía {@code ReceptionConfirmed})
-     * @param text el motivo al abrir, la respuesta, el motivo del escalamiento o la decisión, según el evento
+     * @param receptionLineId línea de la recepción; nula si se registró a mano
+     * @param unit unidad del material (la que traía {@code ReceptionConfirmed}); nula si se registró a mano
+     * @param text el motivo al abrir (la observación si se registró a mano), la respuesta, el motivo del escalamiento o la decisión, según el evento
      */
     public record DiscrepancyChanged(UUID discrepancyId, UUID receptionId, UUID receptionLineId, UUID dispatchId,
             String manifestCode, UUID worksiteId, UUID warehouseId, UUID materialId, String sku, String materialName,

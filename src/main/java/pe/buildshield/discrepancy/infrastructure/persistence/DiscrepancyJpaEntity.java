@@ -11,6 +11,7 @@ import jakarta.persistence.OneToMany;
 import jakarta.persistence.OrderBy;
 import jakarta.persistence.Table;
 import pe.buildshield.discrepancy.domain.model.Discrepancy;
+import pe.buildshield.discrepancy.domain.model.DiscrepancyOrigin;
 import pe.buildshield.discrepancy.domain.model.DiscrepancyStatus;
 import pe.buildshield.discrepancy.domain.model.DiscrepancyType;
 import pe.buildshield.discrepancy.domain.model.Evidence;
@@ -38,7 +39,7 @@ public class DiscrepancyJpaEntity extends AuditableAbstractAggregateRoot<Discrep
     @Column(name = "reception_id", nullable = false, updatable = false)
     private UUID receptionId;
 
-    @Column(name = "reception_line_id", nullable = false, unique = true, updatable = false)
+    @Column(name = "reception_line_id", updatable = false)
     private UUID receptionLineId;
 
     @Column(name = "dispatch_id", nullable = false, updatable = false)
@@ -74,6 +75,19 @@ public class DiscrepancyJpaEntity extends AuditableAbstractAggregateRoot<Discrep
 
     @Column(name = "reason", nullable = false, length = 60, updatable = false)
     private String reason;
+
+    @Column(name = "shrinkage_pct", precision = 7, scale = 2, updatable = false)
+    private BigDecimal shrinkagePercent;
+
+    @Column(name = "tolerance_pct", precision = 5, scale = 2, updatable = false)
+    private BigDecimal tolerancePercent;
+
+    @Column(name = "observation", length = 500, updatable = false)
+    private String observation;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "origin", nullable = false, length = 10, updatable = false)
+    private DiscrepancyOrigin origin;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 15)
@@ -115,6 +129,10 @@ public class DiscrepancyJpaEntity extends AuditableAbstractAggregateRoot<Discrep
         type = discrepancy.type();
         quantity = discrepancy.quantity();
         reason = discrepancy.reason();
+        shrinkagePercent = discrepancy.shrinkagePercent();
+        tolerancePercent = discrepancy.tolerancePercent();
+        observation = discrepancy.observation();
+        origin = discrepancy.origin();
         apply(discrepancy);
     }
 
@@ -142,8 +160,8 @@ public class DiscrepancyJpaEntity extends AuditableAbstractAggregateRoot<Discrep
         return Discrepancy.restore(getId(),
                 new Discrepancy.ReceptionLink(receptionId, receptionLineId, dispatchId, manifestCode, worksiteId,
                         warehouseId),
-                new Discrepancy.MaterialLink(materialId, sku, materialName, unit), type, quantity, reason, status,
-                getCreatedBy(), getCreatedAt(), escalatedAt, resolvedAt,
+                new Discrepancy.MaterialLink(materialId, sku, materialName, unit), type, quantity, reason,
+                shrinkagePercent, tolerancePercent, observation, origin, status, getCreatedBy(), getCreatedAt(), escalatedAt, resolvedAt,
                 responses.stream().map(ResponseJpaEntity::toDomain).toList(), photos, getVersion());
     }
 }

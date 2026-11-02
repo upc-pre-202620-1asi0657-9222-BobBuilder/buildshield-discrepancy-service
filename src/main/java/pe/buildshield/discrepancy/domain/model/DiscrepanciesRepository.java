@@ -13,6 +13,9 @@ public interface DiscrepanciesRepository {
 
     boolean existsForReceptionLine(UUID receptionLineId);
 
+    /** Si ya hay una sin cerrar de ese tipo para el material en la recepción. */
+    boolean existsUnclosed(UUID receptionId, UUID materialId, DiscrepancyType type);
+
     /** De la más reciente a la más antigua. */
     List<Discrepancy> search(DiscrepancyFilter filter);
 }

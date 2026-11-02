@@ -8,9 +8,12 @@ import org.springframework.stereotype.Repository;
 import pe.buildshield.discrepancy.domain.model.Discrepancy;
 import pe.buildshield.discrepancy.domain.model.DiscrepancyFilter;
 import pe.buildshield.discrepancy.domain.model.DiscrepanciesRepository;
+import pe.buildshield.discrepancy.domain.model.DiscrepancyStatus;
+import pe.buildshield.discrepancy.domain.model.DiscrepancyType;
 import pe.buildshield.discrepancy.shared.error.ResourceNotFoundException;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -19,6 +22,9 @@ import java.util.UUID;
 /** Discrepancies Repository (C4 v4). El filtro multiempresa limita toda lectura a la organización del contexto. */
 @Repository
 class DiscrepanciesRepositoryAdapter implements DiscrepanciesRepository {
+
+    private static final List<DiscrepancyStatus> UNCLOSED = Arrays.stream(DiscrepancyStatus.values())
+            .filter(status -> !status.closed()).toList();
 
     private final DiscrepanciesJpaRepository jpa;
 
@@ -48,6 +54,11 @@ class DiscrepanciesRepositoryAdapter implements DiscrepanciesRepository {
     @Override
     public boolean existsForReceptionLine(UUID receptionLineId) {
         return jpa.existsByReceptionLineId(receptionLineId);
+    }
+
+    @Override
+    public boolean existsUnclosed(UUID receptionId, UUID materialId, DiscrepancyType type) {
+        return jpa.existsByReceptionIdAndMaterialIdAndTypeAndStatusIn(receptionId, materialId, type, UNCLOSED);
     }
 
     @Override

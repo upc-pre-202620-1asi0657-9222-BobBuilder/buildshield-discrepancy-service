@@ -2,16 +2,22 @@ package pe.buildshield.discrepancy.application;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pe.buildshield.discrepancy.domain.model.DiscrepanciesRepository;
 import pe.buildshield.discrepancy.domain.model.Discrepancy;
+import pe.buildshield.discrepancy.domain.model.DiscrepancyType;
 import pe.buildshield.discrepancy.domain.model.Evidence;
+import pe.buildshield.discrepancy.domain.model.ReceptionProjections;
+import pe.buildshield.discrepancy.domain.model.ReceptionSnapshot;
+import pe.buildshield.discrepancy.shared.error.ConflictException;
 import pe.buildshield.discrepancy.shared.error.ErrorDetail;
 import pe.buildshield.discrepancy.shared.error.ResourceNotFoundException;
 import pe.buildshield.discrepancy.shared.error.ValidationException;
 import pe.buildshield.discrepancy.shared.messaging.OutboxWriter;
 import pe.buildshield.discrepancy.shared.tenant.TenantContext;
+import pe.buildshield.discrepancy.shared.tenant.TenantInfo;
 
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -35,14 +41,16 @@ public class DiscrepanciesCommandService {
     private static final Logger log = LoggerFactory.getLogger(DiscrepanciesCommandService.class);
 
     private final DiscrepanciesRepository discrepancies;
+    private final ReceptionProjections receptions;
     private final DiscrepancyVisibility visibility;
     private final EvidenceStorage storage;
     private final OutboxWriter outbox;
     private final Clock clock;
 
-    public DiscrepanciesCommandService(DiscrepanciesRepository discrepancies, DiscrepancyVisibility visibility,
-            EvidenceStorage storage, OutboxWriter outbox, Clock clock) {
+    public DiscrepanciesCommandService(DiscrepanciesRepository discrepancies, ReceptionProjections receptions,
+            DiscrepancyVisibility visibility, EvidenceStorage storage, OutboxWriter outbox, Clock clock) {
         this.discrepancies = discrepancies;
+        this.receptions = receptions;
         this.visibility = visibility;
         this.storage = storage;
         this.outbox = outbox;
@@ -58,6 +66,11 @@ public class DiscrepanciesCommandService {
     public record ConfirmedLine(UUID receptionLineId, UUID materialId, String sku, String materialName, String unit,
             BigDecimal requested, BigDecimal dispatched, BigDecimal received, BigDecimal shrinkagePercent,
             BigDecimal tolerancePercent, boolean withinTolerance) {
+    }
+
+    /** Datos de {@code POST /discrepancies}. */
+    public record CreateDiscrepancy(UUID receptionId, UUID materialId, DiscrepancyType type, BigDecimal quantity,
+            String observation) {
     }
 
     /** Archivo subido como evidencia. */
@@ -88,6 +101,11 @@ public class DiscrepanciesCommandService {
                     new Discrepancy.MaterialLink(line.materialId(), line.sku(), line.materialName(), line.unit()),
                     line.dispatched(), line.received(), line.shrinkagePercent(), line.tolerancePercent(), confirmedBy,
                     clock.instant());
+            if (discrepancies.existsUnclosed(reception.receptionId(), line.materialId(), discrepancy.type())) {
+                log.info("Ya hay una discrepancia abierta de {} en la recepción {}", line.materialId(),
+                        reception.receptionId());
+                continue;
+            }
             Discrepancy saved = discrepancies.save(discrepancy);
             publish(DiscrepancyEvents.OPENED, saved, saved.reason(), confirmedBy);
             opened++;
@@ -96,6 +114,36 @@ public class DiscrepanciesCommandService {
             log.info("Recepción {}: {} discrepancias abiertas", reception.receptionId(), opened);
         }
         return opened;
+    }
+
+    /**
+     * El encargado de obra registra otra diferencia de una recepción de su obra. La recepción y el material salen de la
+     * copia local: si no se conocen o la recepción es de otra obra, 404.
+     */
+    @Transactional
+    public Discrepancy create(CreateDiscrepancy command) {
+        TenantInfo requester = TenantContext.require();
+        ReceptionSnapshot reception = receptions.find(requester.organizationId(), command.receptionId())
+                .filter(found -> visibility.canSeeWorksiteOrWarehouse(found.worksiteId(), found.warehouseId()))
+                .orElseThrow(() -> new ResourceNotFoundException("RECEPTION_NOT_FOUND",
+                        "La recepción " + command.receptionId() + " no existe"));
+        ReceptionSnapshot.Line line = reception.line(command.materialId()).orElseThrow(() ->
+                new ResourceNotFoundException("MATERIAL_NOT_FOUND", "El material " + command.materialId()
+                        + " no existe en la recepción"));
+        Discrepancy discrepancy = Discrepancy.openManual(reception.manualLink(),
+                new Discrepancy.MaterialLink(line.materialId(), line.sku(), line.materialName(), null),
+                command.type(), command.quantity(), line.shrinkagePercent(), line.tolerancePercent(),
+                command.observation(), requester.userId(), clock.instant());
+        if (discrepancies.existsUnclosed(command.receptionId(), command.materialId(), command.type())) {
+            throw alreadyOpen();
+        }
+        try {
+            Discrepancy saved = discrepancies.save(discrepancy);
+            publish(DiscrepancyEvents.OPENED, saved, saved.observation(), requester.userId());
+            return saved;
+        } catch (DataIntegrityViolationException ex) {
+            throw alreadyOpen();
+        }
     }
 
     @Transactional
@@ -157,6 +205,11 @@ public class DiscrepanciesCommandService {
         discrepancy.addEvidence(evidence);
         discrepancies.save(discrepancy);
         return evidence;
+    }
+
+    private static ConflictException alreadyOpen() {
+        return new ConflictException("DISCREPANCY_ALREADY_OPEN",
+                "Ya hay una discrepancia abierta de ese tipo para el material en esta recepción");
     }
 
     private Discrepancy visible(UUID id) {

@@ -7,6 +7,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import pe.buildshield.discrepancy.domain.model.Discrepancy;
+import pe.buildshield.discrepancy.domain.model.DiscrepancyOrigin;
 import pe.buildshield.discrepancy.domain.model.DiscrepancyStatus;
 import pe.buildshield.discrepancy.domain.model.DiscrepancyType;
 import pe.buildshield.discrepancy.domain.model.Evidence;
@@ -49,9 +50,9 @@ class DiscrepancyApplicationTest {
     private final OutboxWriter outbox = mock(OutboxWriter.class);
     private final MutableClock clock = new MutableClock(NOW);
     private final DiscrepancyVisibility visibility = new DiscrepancyVisibility(store);
-    private final DiscrepanciesCommandService commands = new DiscrepanciesCommandService(store, visibility, store,
-            outbox, clock);
-    private final TestConsumers consumers = new TestConsumers(commands, store);
+    private final DiscrepanciesCommandService commands = new DiscrepanciesCommandService(store, store, visibility,
+            store, outbox, clock);
+    private final TestConsumers consumers = new TestConsumers(commands, store, store);
     private final EvidenceUrlSigner signer = new EvidenceUrlSigner("secreto-de-pruebas-123", java.time.Duration.ofMinutes(30),
             clock);
     private final DiscrepanciesQueryService queries = new DiscrepanciesQueryService(store, visibility, store, signer,
@@ -256,6 +257,130 @@ class DiscrepancyApplicationTest {
         assertThatThrownBy(() -> TenantContext.callAs(new TenantInfo(UUID.randomUUID(), ana, "ADMINISTRATOR"),
                 () -> queries.get(id))).isInstanceOf(ResourceNotFoundException.class);
         verify(outbox).append(eq(organization), eq(luis), eq("DiscrepancyAccepted"), eq(id), any());
+    }
+
+    @Test
+    void automatic_discrepancies_keep_the_percentages_of_the_event_and_no_observation() throws Exception {
+        handle(events.receptionConfirmed(UUID.randomUUID(), reception, luis,
+                List.of(Line.of(cement, "CEM-001", "Cemento Portland", "40", "37", "2.5"))));
+
+        Discrepancy opened = store.byId.values().iterator().next();
+        assertThat(opened.origin()).isEqualTo(DiscrepancyOrigin.AUTOMATIC);
+        assertThat(opened.shrinkagePercent()).isEqualByComparingTo("7.5");
+        assertThat(opened.tolerancePercent()).isEqualByComparingTo("2.5");
+        assertThat(opened.observation()).isNull();
+        assertThat(opened.reception().receptionLineId()).isNotNull();
+    }
+
+    @Test
+    void the_site_manager_reports_a_manual_discrepancy_from_the_local_copy() throws Exception {
+        handle(events.receptionOpened(reception, luis));
+        handle(events.receptionConfirmed(UUID.randomUUID(), reception, luis,
+                List.of(Line.of(cement, "CEM-001", "Cemento Portland", "40", "40", "2.5"))));
+
+        Discrepancy manual = report(luis, reception.receptionId(), cement, DiscrepancyType.DAMAGE, "  Dos bolsas rotas ");
+
+        assertThat(manual.origin()).isEqualTo(DiscrepancyOrigin.MANUAL);
+        assertThat(manual.reception().receptionLineId()).isNull();
+        assertThat(manual.reception().worksiteId()).isEqualTo(torreNorte);
+        assertThat(manual.reception().manifestCode()).isEqualTo("MAN-0001");
+        assertThat(manual.material().sku()).isEqualTo("CEM-001");
+        assertThat(manual.material().name()).isEqualTo("Cemento Portland");
+        assertThat(manual.material().unit()).isNull();
+        assertThat(manual.observation()).isEqualTo("Dos bolsas rotas");
+        assertThat(manual.reason()).isEqualTo("Dos bolsas rotas");
+        assertThat(manual.shrinkagePercent()).isEqualByComparingTo("0");
+        assertThat(manual.tolerancePercent()).isEqualByComparingTo("2.5");
+        assertThat(manual.openedBy()).isEqualTo(luis);
+        ArgumentCaptor<DiscrepancyEvents.DiscrepancyChanged> payload =
+                ArgumentCaptor.forClass(DiscrepancyEvents.DiscrepancyChanged.class);
+        verify(outbox).append(eq(organization), eq(luis), eq("DiscrepancyOpened"), eq(manual.id()), payload.capture());
+        assertThat(payload.getValue().text()).isEqualTo("Dos bolsas rotas");
+        assertThat(payload.getValue().type()).isEqualTo("DAMAGE");
+        assertThat(payload.getValue().receptionLineId()).isNull();
+    }
+
+    @Test
+    void a_manual_report_needs_a_known_reception_of_the_manager_and_a_material_of_the_reception() throws Exception {
+        assertNotFound(luis, reception.receptionId(), cement, "RECEPTION_NOT_FOUND");
+
+        handle(events.receptionOpened(reception, luis));
+        assertNotFound(luis, reception.receptionId(), cement, "MATERIAL_NOT_FOUND");
+
+        handle(events.receptionConfirmed(UUID.randomUUID(), reception, luis,
+                List.of(Line.of(cement, "CEM-001", "Cemento Portland", "40", "40", "2.5"))));
+        assertNotFound(pedro, reception.receptionId(), cement, "RECEPTION_NOT_FOUND");
+        assertNotFound(luis, reception.receptionId(), rebar, "MATERIAL_NOT_FOUND");
+        assertThatThrownBy(() -> TenantContext.callAs(new TenantInfo(UUID.randomUUID(), luis, "SITE_MANAGER"),
+                () -> commands.create(new DiscrepanciesCommandService.CreateDiscrepancy(reception.receptionId(), cement,
+                        DiscrepancyType.DAMAGE, java.math.BigDecimal.ONE, "Bolsas rotas"))))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void only_one_open_discrepancy_per_type_material_and_reception() throws Exception {
+        handle(events.receptionConfirmed(UUID.randomUUID(), reception, luis,
+                List.of(Line.of(cement, "CEM-001", "Cemento Portland", "40", "37", "2.5"))));
+
+        Discrepancy damage = report(luis, reception.receptionId(), cement, DiscrepancyType.DAMAGE, "Bolsas rotas");
+        assertThatThrownBy(() -> report(luis, reception.receptionId(), cement, DiscrepancyType.DAMAGE, "Otra vez"))
+                .isInstanceOf(ConflictException.class)
+                .satisfies(ex -> assertThat(((ConflictException) ex).getCode()).isEqualTo("DISCREPANCY_ALREADY_OPEN"));
+        assertThat(report(luis, reception.receptionId(), cement, DiscrepancyType.WRONG_MATERIAL, "Otro material").type())
+                .isEqualTo(DiscrepancyType.WRONG_MATERIAL);
+
+        TenantContext.runAs(user("WAREHOUSE_MANAGER", rosa), () -> commands.respond(damage.id(), "Se repone"));
+        assertThatThrownBy(() -> report(luis, reception.receptionId(), cement, DiscrepancyType.DAMAGE, "Sigue abierta"))
+                .isInstanceOf(ConflictException.class);
+        TenantContext.runAs(user("SITE_MANAGER", luis), () -> commands.accept(damage.id()));
+        assertThat(report(luis, reception.receptionId(), cement, DiscrepancyType.DAMAGE, "Ya se cerró la anterior").id())
+                .isNotEqualTo(damage.id());
+
+        store.uniqueViolationOnSave = true;
+        assertThatThrownBy(() -> report(luis, reception.receptionId(), cement, DiscrepancyType.EXCESS, "Carrera"))
+                .isInstanceOf(ConflictException.class);
+    }
+
+    @Test
+    void a_confirmation_does_not_duplicate_what_the_site_manager_already_reported() throws Exception {
+        handle(events.receptionOpened(reception, luis));
+        handle(events.receptionConfirmed(UUID.randomUUID(), reception, luis,
+                List.of(Line.of(cement, "CEM-001", "Cemento Portland", "40", "40", "0"))));
+        report(luis, reception.receptionId(), cement, DiscrepancyType.SHORTAGE, "Faltan dos bolsas");
+
+        assertThat(handle(events.receptionConfirmed(UUID.randomUUID(), reception, luis,
+                List.of(Line.of(cement, "CEM-001", "Cemento Portland", "40", "38", "0"))))).isZero();
+        assertThat(store.byId).hasSize(1);
+    }
+
+    @Test
+    void reception_events_for_an_unknown_reception_never_fail() throws Exception {
+        Reception unknown = Reception.random("MAN-0099", torreNorte, almacen);
+        assertThat(handle(events.receptionConfirmed(UUID.randomUUID(), unknown, luis,
+                List.of(Line.of(cement, "CEM-001", "Cemento Portland", "40", "40", "2.5"))))).isZero();
+        assertThat(report(luis, unknown.receptionId(), cement, DiscrepancyType.DAMAGE, "Bolsas rotas").material().sku())
+                .isEqualTo("CEM-001");
+
+        assertThat(handle(events.envelope(UUID.randomUUID(), "ReceptionOpened", "RECEPTION", "r", null,
+                TestEvents.map("receptionId", UUID.randomUUID())))).isZero();
+        assertThat(handle(events.envelope(UUID.randomUUID(), "ReceptionPartiallyReceived", "RECEPTION", "r", null,
+                TestEvents.map("receptionId", UUID.randomUUID())))).isZero();
+        assertThat(store.receptions).hasSize(1);
+
+        handle(events.receptionOpened(unknown, luis));
+        assertThat(store.receptions.get(unknown.receptionId()).line(cement)).isPresent();
+    }
+
+    private Discrepancy report(UUID manager, UUID receptionId, UUID material, DiscrepancyType type, String observation) {
+        return TenantContext.callAs(user("SITE_MANAGER", manager), () -> commands.create(
+                new DiscrepanciesCommandService.CreateDiscrepancy(receptionId, material, type,
+                        new java.math.BigDecimal("2"), observation)));
+    }
+
+    private void assertNotFound(UUID manager, UUID receptionId, UUID material, String code) {
+        assertThatThrownBy(() -> report(manager, receptionId, material, DiscrepancyType.DAMAGE, "Bolsas rotas"))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .satisfies(ex -> assertThat(((ResourceNotFoundException) ex).getCode()).isEqualTo(code));
     }
 
     @Test

@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.http.CacheControl;
 import org.springframework.http.MediaType;
@@ -65,6 +66,23 @@ class DiscrepanciesController {
         UUID organizationId = TenantContext.require().organizationId();
         return DiscrepancyResource.of(organizationId, discrepancy,
                 evidence -> signer.signedUrl(organizationId, discrepancy.id(), evidence));
+    }
+
+    @PostMapping
+    @PreAuthorize("hasRole('SITE_MANAGER')")
+    @Operation(summary = "Registrar una discrepancia",
+            description = "El encargado de obra registra otra diferencia de una recepción de su obra (por ejemplo, "
+                    + "un daño dentro de la tolerancia). Las de las líneas fuera de tolerancia se abren solas al "
+                    + "confirmar la recepción.")
+    @ApiResponse(responseCode = "201", description = "Discrepancia abierta",
+            content = @Content(schema = @Schema(implementation = DiscrepancyResource.class),
+                    examples = @ExampleObject(value = DiscrepancyApiExamples.MANUAL_DISCREPANCY)))
+    @ApiResponse(responseCode = "404", description = "Recepción o material inexistentes o de otra obra",
+            content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    ResponseEntity<DiscrepancyResource> create(@Valid @RequestBody CreateRequest request) {
+        Discrepancy created = commands.create(new DiscrepanciesCommandService.CreateDiscrepancy(request.receptionId(),
+                request.materialId(), request.type(), request.quantity(), request.observation()));
+        return ResponseEntity.created(URI.create("/api/v1/discrepancies/" + created.id())).body(resource(created));
     }
 
     @GetMapping
@@ -196,6 +214,15 @@ class DiscrepanciesController {
         return resource(commands.resolve(id, request.decision()));
     }
 
+    @Schema(description = "Discrepancia registrada a mano")
+    record CreateRequest(@NotNull UUID receptionId, @NotNull UUID materialId,
+            @Schema(description = "SHORTAGE, DAMAGE, EXCESS o WRONG_MATERIAL", example = "DAMAGE")
+            @NotNull DiscrepancyType type,
+            @Schema(example = "2") @NotNull @Digits(integer = 11, fraction = 3) BigDecimal quantity,
+            @Schema(description = "De 3 a 500 caracteres", example = "Dos bolsas rotas en la descarga")
+            String observation) {
+    }
+
     @Schema(description = "Respuesta del almacén")
     record TextRequest(@Schema(description = "De 3 a 500 caracteres", example = "Se repone mañana") String text) {
     }
@@ -250,7 +277,7 @@ class DiscrepanciesController {
     record DiscrepancyResource(UUID id, UUID organizationId, UUID receptionId, UUID receptionLineId, UUID dispatchId,
             String manifestCode, UUID worksiteId, UUID warehouseId, UUID materialId, String sku, String materialName,
             String unit, DiscrepancyType type, String typeLabel, BigDecimal quantity, String reason,
-            DiscrepancyStatus status, String statusLabel, UUID openedBy, Instant openedAt, Instant escalatedAt,
+            BigDecimal shrinkagePercent, BigDecimal tolerancePercent, String observation, DiscrepancyStatus status, String statusLabel, UUID openedBy, Instant openedAt, Instant escalatedAt,
             Instant resolvedAt, ResponseNote response, EscalationNote escalation, ResolutionNote resolution,
             List<ResponseResource> responses, List<EvidenceResource> evidences) {
 
@@ -262,7 +289,9 @@ class DiscrepanciesController {
                     reception.receptionLineId(), reception.dispatchId(), reception.manifestCode(),
                     reception.worksiteId(), reception.warehouseId(), material.materialId(), material.sku(),
                     material.name(), material.unit(), discrepancy.type(), discrepancy.type().label(),
-                    discrepancy.quantity(), discrepancy.reason(), discrepancy.status(), discrepancy.status().label(),
+                    discrepancy.quantity(), discrepancy.reason(), discrepancy.shrinkagePercent(),
+                    discrepancy.tolerancePercent(), discrepancy.observation(), discrepancy.status(),
+                    discrepancy.status().label(),
                     discrepancy.openedBy(), discrepancy.openedAt(), discrepancy.escalatedAt(),
                     discrepancy.resolvedAt(), discrepancy.response().map(ResponseNote::of).orElse(null),
                     discrepancy.escalation().map(EscalationNote::of).orElse(null),

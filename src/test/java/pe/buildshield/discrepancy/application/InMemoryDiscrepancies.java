@@ -4,6 +4,10 @@ import pe.buildshield.discrepancy.domain.model.DiscrepanciesRepository;
 import pe.buildshield.discrepancy.domain.model.Discrepancy;
 import pe.buildshield.discrepancy.domain.model.DiscrepancyFilter;
 import pe.buildshield.discrepancy.domain.model.DiscrepancyStatus;
+import pe.buildshield.discrepancy.domain.model.DiscrepancyType;
+import pe.buildshield.discrepancy.domain.model.ReceptionProjections;
+import pe.buildshield.discrepancy.domain.model.ReceptionSnapshot;
+import org.springframework.dao.DataIntegrityViolationException;
 import pe.buildshield.discrepancy.domain.model.StaffAssignments;
 import pe.buildshield.discrepancy.shared.tenant.TenantContext;
 
@@ -17,12 +21,17 @@ import java.util.Set;
 import java.util.UUID;
 
 /** Repositorio, asignaciones y almacenamiento en memoria, con el filtro por organización de la persistencia real. */
-class InMemoryDiscrepancies implements DiscrepanciesRepository, StaffAssignments, EvidenceStorage {
+class InMemoryDiscrepancies implements DiscrepanciesRepository, StaffAssignments, EvidenceStorage,
+        ReceptionProjections {
 
     final Map<UUID, Discrepancy> byId = new HashMap<>();
     final Map<UUID, UUID> organizationOf = new HashMap<>();
     final Map<UUID, Object[]> assignments = new HashMap<>();
     final Map<String, byte[]> files = new HashMap<>();
+    final Map<UUID, ReceptionSnapshot> receptions = new HashMap<>();
+    final Map<UUID, UUID> receptionOrganization = new HashMap<>();
+    /** Simula al otro encargado que ganó la carrera contra el índice único. */
+    boolean uniqueViolationOnSave;
 
     private UUID organization() {
         return TenantContext.require().organizationId();
@@ -30,9 +39,12 @@ class InMemoryDiscrepancies implements DiscrepanciesRepository, StaffAssignments
 
     @Override
     public Discrepancy save(Discrepancy d) {
+        if (uniqueViolationOnSave) {
+            throw new DataIntegrityViolationException("uk_discrepancies_open");
+        }
         UUID id = d.id() == null ? UUID.randomUUID() : d.id();
         Discrepancy saved = Discrepancy.restore(id, d.reception(), d.material(), d.type(), d.quantity(), d.reason(),
-                d.status(), d.openedBy(), d.openedAt(), d.escalatedAt(), d.resolvedAt(), d.responses(),
+                d.shrinkagePercent(), d.tolerancePercent(), d.observation(), d.origin(), d.status(), d.openedBy(), d.openedAt(), d.escalatedAt(), d.resolvedAt(), d.responses(),
                 d.evidences(), d.version() == null ? 0L : d.version() + 1);
         byId.put(id, saved);
         organizationOf.put(id, organization());
@@ -47,6 +59,25 @@ class InMemoryDiscrepancies implements DiscrepanciesRepository, StaffAssignments
     @Override
     public boolean existsForReceptionLine(UUID receptionLineId) {
         return byId.values().stream().anyMatch(d -> receptionLineId.equals(d.reception().receptionLineId()));
+    }
+
+    @Override
+    public boolean existsUnclosed(UUID receptionId, UUID materialId, DiscrepancyType type) {
+        return byId.values().stream().anyMatch(d -> d.reception().receptionId().equals(receptionId)
+                && d.material().materialId().equals(materialId) && d.type() == type && !d.status().closed());
+    }
+
+    @Override
+    public void save(UUID organizationId, ReceptionSnapshot reception) {
+        ReceptionSnapshot known = receptions.get(reception.receptionId());
+        receptions.put(reception.receptionId(), known != null && reception.lines().isEmpty() ? known : reception);
+        receptionOrganization.put(reception.receptionId(), organizationId);
+    }
+
+    @Override
+    public Optional<ReceptionSnapshot> find(UUID organizationId, UUID receptionId) {
+        return Optional.ofNullable(receptions.get(receptionId))
+                .filter(found -> organizationId.equals(receptionOrganization.get(receptionId)));
     }
 
     @Override
