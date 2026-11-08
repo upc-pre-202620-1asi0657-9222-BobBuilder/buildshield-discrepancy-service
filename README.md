@@ -36,8 +36,8 @@ respuesta del almacén, aceptación o escalamiento y decisión final (US36, RF32
 - Visibilidad como en el Core: el administrador todo; el encargado de obra, sus obras asignadas; el encargado de
   almacén, sus almacenes asignados. Lo que no ve es 404.
 - Evidencias: imagen JPG, PNG o WEBP de hasta 5 MB, validada también por su firma de bytes. `EvidenceStorageAdapter`
-  la guarda en `EVIDENCE_LOCAL_DIR` (por defecto `data/evidence`); en la nube se reemplaza por Amazon S3 con la misma
-  clave `organización/discrepancia/evidencia.ext`, que es el `photo_url`. La foto se sirve por URL relativa firmada con
+  la guarda en `EVIDENCE_LOCAL_DIR` (por defecto `data/evidence`); en el perfil `prod`, `S3EvidenceStorageAdapter` la
+  guarda en el bucket `EVIDENCE_BUCKET` con la misma clave `organización/discrepancia/evidencia.ext`, que es el `photo_url`. La foto se sirve por URL relativa firmada con
   HMAC, válida 30 minutos.
 - `Idempotency-Key` obligatoria en `POST /discrepancies`, `response`, `accept`, `escalate` y `resolve` (la web la agrega con su
   interceptor); se guarda en `idempotency_keys` con llave `(key, organization_id)`. La subida de evidencias no la usa.
@@ -60,7 +60,7 @@ respuesta del almacén, aceptación o escalamiento y decisión final (US36, RF32
 ## Variables de entorno
 
 `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `KAFKA_BOOTSTRAP_SERVERS` (por defecto `localhost:9092`),
-`BUILDSHIELD_JWT_PUBLIC_KEY` y `EVIDENCE_LOCAL_DIR`. Perfiles `local`, `test` y `prod`.
+`BUILDSHIELD_JWT_PUBLIC_KEY`, `EVIDENCE_LOCAL_DIR` y, en `prod`, `EVIDENCE_BUCKET`, `EVIDENCE_URL_SECRET` y `AWS_REGION`. Perfiles `local`, `test` y `prod`.
 
 ## Ejecutar en local (clúster PostgreSQL 127.0.0.1:5433 con autenticación trust)
 
